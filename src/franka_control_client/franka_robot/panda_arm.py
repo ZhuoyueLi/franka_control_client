@@ -14,9 +14,10 @@ from ..core.remote_device import RemoteDevice
 class ControlMode(str, Enum):
     IDLE = "Idle"
     HybridJointImpedance = "HybridJointImpedance"
+    OSC = "OSC"
+    CartesianImpedance = "CartesianImpedance"
     # JOINT_POSITION = "JointPosition"
     # JOINT_VELOCITY = "JointVelocity"
-    # CARTESIAN_POSE = "CartesianPose"
     # CARTESIAN_VELOCITY = "CartesianVelocity"
     # JOINT_TORQUE = "JointTorque"
     # GRAVITY_COMP = "GravityComp"
@@ -53,6 +54,9 @@ class CartesianPoseCommand(TypedDict):
     """
 
     pos: List[float]  # x, y, z and quaternion x, y, z, w
+    rot: List[float]  # Optional rotation matrix (9 values) if needed
+    pos_vel: List[float]  # Optional Cartesian velocity (vx, vy, vz) if needed
+    rot_vel: List[float]  # Optional rotational velocity (wx, wy, wz
 
 
 class CartesianVelocityCommand(TypedDict):
@@ -89,16 +93,10 @@ class RemotePandaArm(RemoteDevice):
         )
         self._enable_publishers = enable_publishers
         self.joint_position_publisher = pyzlc.Publisher(
-            f"{robot_name}/joint_position_command"
-        )
-        self.joint_velocity_publisher = pyzlc.Publisher(
-            f"{robot_name}/joint_velocity_command"
+            f"{robot_name}/joint_command"
         )
         self.cartesian_pose_publisher = pyzlc.Publisher(
             f"{robot_name}/cartesian_pose_command"
-        )
-        self.cartesian_velocity_publisher = pyzlc.Publisher(
-            f"{robot_name}/cartesian_velocity_command"
         )
         self.joint_torque_publisher = pyzlc.Publisher(
             f"{robot_name}/joint_torque_command"
@@ -198,12 +196,13 @@ class RemotePandaArm(RemoteDevice):
             JointPositionCommand(pos=arr.tolist())
         )
 
-    def send_cartesian_pose_command(self, pose) -> None:
+    def send_cartesian_pose_command(self, pos, rot) -> None:
         """
         Send a Cartesian pose command to the Franka arm.
 
         Args:
-            pose (tuple of 7 floats): translation (x, y, z) and orientation (quaternion).
+            pos (tuple of 3 floats): translation (x, y, z).
+            rot (tuple of 3 floats): orientation (euler angles).
         Raises:
             CommandError: If packing or command execution fails.
         """
@@ -211,10 +210,20 @@ class RemotePandaArm(RemoteDevice):
             raise RuntimeError(
                 "Publishers disabled for this RemotePandaArm instance."
             )
-        arr = np.asarray(pose, dtype=np.float64).reshape(-1)
-        if arr.size != 7:
-            raise ValueError(f"Expected 7 pose values, got {arr.size}")
-        raise NotImplementedError
+        pos_arr = np.asarray(pos, dtype=np.float64).reshape(-1)
+        rot_arr = np.asarray(rot, dtype=np.float64).reshape(-1)
+        if pos_arr.size != 3 or rot_arr.size != 3:
+            raise ValueError(
+                f"Expected 3 position values and 3 orientation values, got {pos_arr.size} and {rot_arr.size}"
+            )
+        self.cartesian_pose_publisher.publish(
+            CartesianPoseCommand(
+                pos=pos_arr.tolist(),
+                rot=rot_arr.tolist(),
+                pos_vel=[0, 0, 0],
+                rot_vel=[0, 0, 0],
+            )
+        )
 
     def send_joint_velocity_command(self, joint_velocities) -> None:
         """
