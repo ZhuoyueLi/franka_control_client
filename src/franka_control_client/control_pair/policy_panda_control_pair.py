@@ -21,7 +21,7 @@ GRIPPER_FORCE = 0.3
 ACTION_LOG_INTERVAL_S: float = 0.5
 GRIPPER_TOGGLE_WARN_WINDOW_S: float = 3.0
 GRIPPER_TOGGLE_WARN_COUNT: int = 6
-DEFAULT_POSITION = [0, 0, 0, -2.15, 0, 2.15, 0]
+DEFAULT_POSITION = (0.0, 0.0, 0.0, -2.15, 0.0, 2.15, 0.0)
 
 # Calculate velocity limits using the standard approach from training
 VELOCITY_LIMITS = np.array([[-4 * np.pi / 2, 4 * np.pi / 2]] * 7).T / 32
@@ -179,7 +179,7 @@ class PolicyPandaControlPair(ControlPair):
         return self._last_joint_pos.copy()
 
 
-    def control_rest(self) -> None:
+    def control_reset(self) -> None:
         self.panda_arm.set_franka_arm_control_mode(
             ControlMode.HybridJointImpedance
         )
@@ -280,7 +280,7 @@ class PolicyPandaControlPair(ControlPair):
 
     def _control_task(self) -> None:
         try:
-            self.control_rest()
+            self.control_reset()
             while self.is_running:
                 start = time.perf_counter()
                 self.control_step()

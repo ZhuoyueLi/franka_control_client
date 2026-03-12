@@ -19,7 +19,7 @@ class GelloPandControlPair(ControlPair):
         self.follower = follower
         self._last_gripper_cmd: Optional[float] = None
     
-    def control_rest(self)-> None:
+    def control_reset(self)-> None:
         leader_arm_state = self.leader.current_state["gello_arm_state"]
         if leader_arm_state is None:
             pyzlc.error(
@@ -44,6 +44,7 @@ class GelloPandControlPair(ControlPair):
                 force=GRIPPER_FORCE,
                 blocking=True,
             )
+
 
     def control_step(self) -> None:
         leader_arm_state = self.leader.current_state["gello_arm_state"]
@@ -87,7 +88,7 @@ class GelloPandControlPair(ControlPair):
     def _control_task(self) -> None:
         try:
             # pyzlc.info("Resetting...")
-            # self.control_rest()
+            # self.control_reset()
             # pyzlc.sleep(1)
             self.follower.panda_arm.set_franka_arm_control_mode(CONTROL_MODE)
             while self.is_running:
