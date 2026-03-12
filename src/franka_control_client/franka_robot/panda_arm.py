@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import TypedDict, Tuple, List, Optional
+from typing import TypedDict, Sequence, List, Optional
 import pyzlc
 import numpy as np
 
@@ -29,6 +29,8 @@ class PandaArmState(TypedDict):
     """
 
     time_ms: int
+    EE_pos: List[float]
+    EE_quat: List[float]
     O_T_EE: List[float]
     O_T_EE_d: List[float]
     q: List[float]
@@ -87,7 +89,7 @@ class RemotePandaArm(RemoteDevice):
             robot_name (str): The name of the Franka robot.
         """
         super().__init__(robot_name)
-        self.default_pose: Tuple[float, ...] = (-1,)
+        self.default_pose: Sequence[float] = (-1,)
         self.arm_state_sub = LatestMsgSubscriber(
             f"{robot_name}/franka_arm_state"
         )
@@ -122,6 +124,22 @@ class RemotePandaArm(RemoteDevice):
         """Return the latest Franka arm state."""
         return self.arm_state_sub.get_latest()
 
+    @property
+    def current_ee_position(self) -> Optional[List[float]]:
+        """Return the current end-effector position (x, y, z)."""
+        state = self.current_state
+        if state is None:
+            return None
+        return state["O_T_EE"][:3]
+
+    @property
+    def current_ee_rotation(self) -> Optional[List[float]]:
+        """Return the current end-effector rotation (quaternion x, y, z, w)."""
+        state = self.current_state
+        if state is None:
+            return None
+        return state["O_T_EE"][3:7]
+
     def get_franka_arm_state(self) -> PandaArmState:
         """Return a single state sample"""
         return pyzlc.call(f"{self._name}/get_franka_arm_state", pyzlc.empty)
@@ -138,7 +156,7 @@ class RemotePandaArm(RemoteDevice):
         pyzlc.info(f"Set Franka arm control mode to {mode.value}")
 
     def move_franka_arm_to_joint_position(
-        self, joint_positions: Tuple[float, ...]
+        self, joint_positions: Sequence[float]
     ) -> None:
         """
         Move the Franka arm to the specified joint position.
@@ -164,7 +182,7 @@ class RemotePandaArm(RemoteDevice):
             )
 
     def move_franka_arm_to_cartesian_position(
-        self, pose_matrix: Tuple[float, ...]
+        self, pose_matrix: Sequence[float]
     ) -> None:
         """
         Move the Franka arm to the specified Cartesian pose.
@@ -180,7 +198,9 @@ class RemotePandaArm(RemoteDevice):
             )
         raise NotImplementedError
 
-    def send_joint_position_command(self, joint_positions) -> None:
+    def send_joint_position_command(
+        self, joint_positions: Sequence[float]
+    ) -> None:
         """
         Send a joint position command to the Franka arm.
         Accepts tuple, list, numpy array, or torch tensor (no type checking).
@@ -196,7 +216,9 @@ class RemotePandaArm(RemoteDevice):
             JointPositionCommand(pos=arr.tolist())
         )
 
-    def send_cartesian_pose_command(self, pos, rot) -> None:
+    def send_cartesian_pose_command(
+        self, pos: Sequence[float], rot: Sequence[float]
+    ) -> None:
         """
         Send a Cartesian pose command to the Franka arm.
 
@@ -225,7 +247,9 @@ class RemotePandaArm(RemoteDevice):
             )
         )
 
-    def send_joint_velocity_command(self, joint_velocities) -> None:
+    def send_joint_velocity_command(
+        self, joint_velocities: Sequence[float]
+    ) -> None:
         """
         Send a joint velocity command to the Franka arm.
         Accepts tuple, list, numpy array, or torch tensor (no type checking).
@@ -239,29 +263,14 @@ class RemotePandaArm(RemoteDevice):
             raise ValueError(f"Expected 7 joint velocities, got {arr.size}")
         raise NotImplementedError
 
-    def send_cartesian_velocity_command(self, cartesian_velocities) -> None:
-        """
-        Send a Cartesian velocity command to the Franka arm.
+    def send_cartesian_velocity_command(
+        self, cartesian_velocities: Sequence[float]
+    ) -> None:
+        raise NotImplementedError
 
-        Args:
-            cartesian_velocities (tuple of 6 floats): Target Cartesian velocities (vx, vy, vz, wx, wy, wz).
-        Raises:
-            CommandError: If packing or command execution fails.
-        """
-        if not self._enable_publishers:
-            raise RuntimeError(
-                "Publishers disabled for this RemotePandaArm instance."
-            )
-        arr = np.asarray(cartesian_velocities, dtype=np.float64).reshape(-1)
-        if arr.size != 6:
-            raise ValueError(
-                f"Expected 6 Cartesian velocities, got {arr.size}"
-            )
-        self.cartesian_velocity_publisher.publish(
-            CartesianVelocityCommand(vel=arr.tolist())
-        )
-
-    def send_joint_torque_command(self, joint_torques) -> None:
+    def send_joint_torque_command(
+        self, joint_torques: Sequence[float]
+    ) -> None:
         """
         Send a joint torque command to the Franka arm.
         Accepts tuple, list, numpy array, or torch tensor (no type checking).

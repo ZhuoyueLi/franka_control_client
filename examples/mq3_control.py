@@ -1,9 +1,13 @@
+import threading
 import time
+from typing import List, Optional
 
 import numpy as np
-from simpub.core import init_xr_node_manager
-from simpub.xr_device import MetaQuest3
+import scipy
+from franka_control_client.core.remote_device import RemoteDevice
+from simpub import init_xr_node_manager, MetaQuest3
 import pyzlc
+from scipy.spatial.transform import Rotation as R
 
 from franka_control_client.franka_robot.panda_arm import (
     ControlMode,
@@ -13,37 +17,106 @@ from franka_control_client.franka_robot.panda_gripper import (
     RemotePandaGripper,
 )
 
+
+class MetaQuest3PandaController(RemoteDevice):
+    def __init__(self, device_name: str, panda: RemotePandaArm) -> None:
+        self.mq3 = MetaQuest3(device_name)
+        self.panda = panda
+        self.mq3.register_trigger_press_event(
+            "hand_trigger", "right", self.start_control
+        )
+        self.mq3.register_trigger_release_event(
+            "hand_trigger", "right", self.stop_control
+        )
+        self.on_control = False
+        self.base_ee_position: Optional[List[float]] = None
+        self.base_ee_rotation: Optional[List[float]] = None
+        self.base_mq3_position: Optional[List[float]] = None
+        self.base_mq3_rotation: Optional[List[float]] = None
+
+    def start_control(self) -> None:
+        arm_state = self.panda.current_state
+        if arm_state is None:
+            raise ValueError("No arm state data received from the robot.")
+        controller_data = self.mq3.get_controller_data()
+        if controller_data is None:
+            raise ValueError("No controller data received from Meta Quest 3.")
+        right_data = controller_data["right"]
+        self.base_ee_position, self.base_ee_rotation = (
+            arm_state["EE_pos"],
+            arm_state["EE_quat"],
+        )
+        self.base_mq3_position, self.base_mq3_rotation = (
+            right_data["pos"],
+            right_data["rot"],
+        )
+        print(
+            f"Base MQ3 position: {self.base_mq3_position}, Base EE rotation: {self.base_ee_position}"
+        )
+        self.on_control = True
+        print("Control started.")
+
+    def stop_control(self) -> None:
+        self.on_control = False
+        print(
+            f"Base MQ3 position: {self.base_mq3_position}, Base EE rotation: {self.base_ee_position}"
+        )
+        self.base_ee_position = None
+        self.base_ee_rotation = None
+        self.base_mq3_position = None
+        self.base_mq3_rotation = None
+        print("Control stopped.")
+
+    def connect(self) -> None:
+        pass
+
+    def update(self) -> None:
+        arm_state = self.panda.current_state
+        print(f"Current arm state: {arm_state['O_T_EE']}")
+        if not self.on_control:
+            return
+        controller_data = self.mq3.get_controller_data()
+        if controller_data is None or self.base_mq3_position is None:
+            return
+        right_data = controller_data["right"]
+        mq3_position, mq3_rotation = right_data["pos"], right_data["rot"]
+        delta_position = np.array(mq3_position) - np.array(
+            self.base_mq3_position
+        )
+        desired_position = np.array(self.base_ee_position) + delta_position
+        # print(f"Control: Base MQ3 position: {self.base_mq3_position}, mq3_position: {mq3_position} delta_position: {delta_position}, desired_position: {desired_position}")
+        r_mq3 = R.from_quat(mq3_rotation)
+        r_mq3_base = R.from_quat(self.base_mq3_rotation)
+
+        # MQ3 relative rotation
+        delta_rot = r_mq3 * r_mq3_base.inv()
+
+        r_ee_base = R.from_quat(self.base_ee_rotation)
+
+        # apply delta rotation to EE
+        desired_rot = delta_rot * r_ee_base
+        self.panda.send_cartesian_pose_command(
+            pos=desired_position.tolist(), rot=desired_rot.as_rotvec().tolist()
+        )
+
+
 if __name__ == "__main__":
-    init_xr_node_manager("192.168.0.134")
-    mq3 = MetaQuest3("IRL-MQ3-1")  # You can change the name by using simpubweb
-    pyzlc.init("mq3_control_client", "127.0.0.1")
-    robot = RemotePandaArm("FrankaPanda")
-    # gripper = RemotePandaGripper("192.168.0.", 5557)
+    pyzlc.init(
+        "mq3_control",
+        "127.0.0.1",
+        group_name="MujocoRobotGroup",
+        group_port=7720,
+    )
+    robot = RemotePandaArm("MujocoRobot")
+    init_xr_node_manager("MQ3", "192.168.0.117")
+    mq3 = MetaQuest3PandaController(
+        "IRL-MQ3-2", robot
+    )  # You can change the name by using simpubweb
     robot.connect()
-    # gripper.start_gripper_control()
-    print(robot.get_franka_arm_control_mode())
-    print(robot.get_franka_arm_state())
-    robot.set_franka_arm_control_mode(ControlMode.HybridJointImpedance)
-    current_joint_pose = robot.current_state["q"]
-    current_joint_pose[-1] += 1
-    print("Moving to new joint position:", current_joint_pose)
+    robot.set_franka_arm_control_mode(ControlMode.CartesianImpedance)
     try:
         while True:
-            input_data = mq3.get_controller_data()
-            robot.send_joint_position_command(current_joint_pose)
-            if input_data is None:
-                continue
-            if input_data["right"]["hand_trigger"]:
-                vel = np.array(input_data["right"]["vel"])
-                angular_vel = np.array(input_data["right"]["ang_vel"])
-                angular_vel = 0.5 * angular_vel
-                robot.send_cartesian_velocity_command(
-                    vel.tolist() + angular_vel.tolist()
-                )
-                width = 0.08 * (1 - input_data["right"]["index_trigger"])
-                print(f"Gripper width command: {width:.3f}")
-            time.sleep(0.1)
+            mq3.update()
+            time.sleep(0.5)
     except KeyboardInterrupt:
         pass
-    for _ in range(100):
-        time.sleep(0.1)

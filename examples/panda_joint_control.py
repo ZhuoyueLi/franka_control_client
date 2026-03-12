@@ -14,9 +14,12 @@ if __name__ == "__main__":
     )
     robot = RemotePandaArm("MujocoRobot")
     robot.connect()
-    robot.set_franka_arm_control_mode(ControlMode.CartesianImpedance)
+    robot.set_franka_arm_control_mode(ControlMode.HybridJointImpedance)
+    state = robot.get_franka_arm_state()
     for i in range(10):
-        robot.send_cartesian_pose_command(
-            pos=[0.5, 0.0, 0.5 + 0.05 * i], rot=[0.0, 90.0, 0.0]
+        target_joint_positions = state["q"]
+        target_joint_positions[3] += 0.05
+        robot.send_joint_position_command(
+            joint_positions=target_joint_positions
         )
         pyzlc.sleep(1)
