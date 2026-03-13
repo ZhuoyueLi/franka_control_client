@@ -21,18 +21,18 @@ class ControlPair(abc.ABC):
     def stop_control_pair(self) -> None:
         if not self.is_running:
             return
-        pyzlc.info("Resetting...")
-        self.control_rest()
-        pyzlc.sleep(1.5)
+        # pyzlc.info("Resetting...")
+        # self.control_reset()
+        # pyzlc.sleep(1.5)
         self.is_running = False
         if self.control_task_thread is not None:
             self.control_task_thread.join()
             self.control_task_thread = None
 
     @abc.abstractmethod
-    def control_rest(self) -> None:
+    def control_reset(self) -> None:
         raise NotImplementedError(
-            "Subclasses must implement control_rest method."
+            "Subclasses must implement control_reset method."
         )
 
     @abc.abstractmethod
@@ -50,7 +50,7 @@ class ControlPair(abc.ABC):
     def _control_task(self) -> None:
         try:
             # pyzlc.info("Resetting...")
-            # self.control_rest()
+            # self.control_reset()
             # pyzlc.sleep(1)
             while self.is_running:
                 self.control_step()

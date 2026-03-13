@@ -20,6 +20,7 @@ class PolicyInferenceEvent(str, Enum):
     SAVE = "save"
     DISCARD = "discard"
     STAND_BY = "stand_by"
+    RESET_ARM = "reset_arm"
     QUIT = "quit"
 
 
@@ -125,6 +126,12 @@ class PolicyInferenceManager(abc.ABC):
             PolicyInferenceState.EXITING,
             action=self._close,
         )
+        self._state_machine.register_transition(
+            PolicyInferenceState.WAITING,
+            PolicyInferenceEvent.RESET_ARM,
+            PolicyInferenceState.WAITING,
+            action=self._reset_arm,
+        )
 
     def register_start_infering_event(
         self, handler: Callable[[], None]
@@ -148,7 +155,11 @@ class PolicyInferenceManager(abc.ABC):
                         self._state_machine.state
                         == PolicyInferenceState.INFERING
                     ):
+                        # curr_time = time.perf_counter()
                         self._infer_step()
+                        # end_time = time.perf_counter()
+                        # elapsed = end_time - curr_time
+                        # print(f"Inference step took {elapsed:.3f} seconds")
                     if (
                         self._state_machine.state
                         == PolicyInferenceState.STOPPED
@@ -167,11 +178,13 @@ class PolicyInferenceManager(abc.ABC):
             self._state_machine.trigger(PolicyInferenceEvent.DISCARD)
         elif key == "q":
             self._state_machine.trigger(PolicyInferenceEvent.QUIT)
+        elif key == "r":
+            self._state_machine.trigger(PolicyInferenceEvent.RESET_ARM)
 
     def _on_state_enter(self, state: PolicyInferenceState) -> None:
         if state == PolicyInferenceState.WAITING:
             self._ui_console.update_hint(
-                "Press 'n' to start infering, or 'q' to quit"
+                "Press 'n' to start infering, 'r' to reset arm, or 'q' to quit"
             )
         elif state == PolicyInferenceState.INFERING:
             self._ui_console.update_hint(
@@ -207,6 +220,10 @@ class PolicyInferenceManager(abc.ABC):
     def _stop_infering(self) -> None:
         self._ui_console.update_hint("Stopping policy inference...")
         self._stop_infering_event.emit()
+
+    @abc.abstractmethod
+    def _reset_arm(self) -> None:
+        raise NotImplementedError
 
     def _reset_to_waiting(self) -> None:
         #todo:inferencer

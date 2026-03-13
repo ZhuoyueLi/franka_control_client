@@ -39,7 +39,7 @@ from franka_control_client.control_pair.gello_panda_control_pair import (
 if __name__ == "__main__":
     pyzlc.init(
         "data_collection",
-        "192.168.0.109",
+        "192.168.1.1",
         group_name="DroidGroup",
         group_port=7730,
     )
@@ -50,21 +50,10 @@ if __name__ == "__main__":
         RemoteRobotiqGripper("FrankaPanda"),
     )
     control_pair = GelloPandControlPair(leader, follower)
-    camera_left = ImageDataWrapper(
-        CameraDevice("zed_left", preview=False),
-        capture_interval=0.033,
-        hw_name="zed_left",
-    )
-    camera_right = ImageDataWrapper(
-        CameraDevice("zed_right", preview=False),
-        capture_interval=0.033,
-        hw_name="zed_right",
-    )
-    camera_wrist = ImageDataWrapper(
-        CameraDevice("zed_wrist", preview=False),
-        capture_interval=0.033,
-        hw_name="zed_wrist",
-    )
+    #for now capture_interval is not using only using the global frequency fps
+    camera_left = ImageDataWrapper(CameraDevice("zed_left", preview=False),capture_interval=0.033,hw_name="zed_left")
+    camera_right = ImageDataWrapper(CameraDevice("zed_right", preview=False),capture_interval=0.033,hw_name="zed_right")
+    camera_wrist = ImageDataWrapper(CameraDevice("zed_wrist", preview=False),capture_interval=0.033,hw_name="zed_wrist")
     data_collectors: List[IRL_HardwareDataWrapper] = []
     data_collectors.append(camera_left)
     data_collectors.append(camera_right)
@@ -72,20 +61,15 @@ if __name__ == "__main__":
     data_collectors.append(GelloDataWrapper(leader))
     data_collectors.append(PandaArmDataWrapper(follower.panda_arm))
     data_collectors.append(RobotiqGripperDataWrapper(follower.robotiq_gripper))
-    # name = time.strftime("%Y%m%d_%H%M%S", time.localtime())
-    task = "green_block"
+    # name = time.strftim  e("%Y%m%d_%H%M%S", time.localtime())
+    task = "test_40hz"
     data_collection_manager = IRLDataCollection(
-        data_collectors,
-        f"/home/irl-admin/new_data_collection/{task}",
-        task,
-        fps=50,
+        data_collectors, 
+        f"/home/irl-admin/new_data_collection/{task}", 
+        task, 
+        fps=40,
+        control_pair=control_pair
     )
-    control_pair.control_rest()
-    data_collection_manager.register_start_collecting_event(
-        control_pair.start_control_pair
-    )
-    data_collection_manager.register_stop_collecting_event(
-        control_pair.stop_control_pair
-    )
+    control_pair.control_reset()
     data_collection_manager.run()
     pyzlc.shutdown()

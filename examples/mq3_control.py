@@ -17,6 +17,14 @@ from franka_control_client.franka_robot.panda_gripper import (
     RemotePandaGripper,
 )
 
+def print_state(state: Optional[dict]) -> None:
+    if state is None:
+        print("No state data available.")
+        return
+    print("Current Franka Arm State: ===============================")
+    print(f"EE Position: {state['EE_pos']}")
+    print(f"EE Rotation (quaternion): {state['EE_quat']}")
+    print(f"Joint Angles: {state['q']}")
 
 class MetaQuest3PandaController(RemoteDevice):
     def __init__(self, device_name: str, panda: RemotePandaArm) -> None:
@@ -50,29 +58,35 @@ class MetaQuest3PandaController(RemoteDevice):
             right_data["pos"],
             right_data["rot"],
         )
-        print(
-            f"Base MQ3 position: {self.base_mq3_position}, Base EE rotation: {self.base_ee_position}"
-        )
         self.on_control = True
+        print("==========================================")
+        print(
+            f"Base MQ3 position: {self.base_mq3_position}, Base EE position: {self.base_ee_position}"
+        )
+        print(f"EE Matrix: {arm_state['O_T_EE']}")
         print("Control started.")
 
     def stop_control(self) -> None:
         self.on_control = False
         print(
-            f"Base MQ3 position: {self.base_mq3_position}, Base EE rotation: {self.base_ee_position}"
+            f"Base MQ3 position: {self.base_mq3_position}, Base EE position: {self.base_ee_position}"
         )
+        arm_state = self.panda.current_state
+        print(f"EE Matrix: {arm_state['O_T_EE']}")
         self.base_ee_position = None
         self.base_ee_rotation = None
         self.base_mq3_position = None
         self.base_mq3_rotation = None
         print("Control stopped.")
+        print("==========================================")
 
     def connect(self) -> None:
         pass
 
     def update(self) -> None:
-        arm_state = self.panda.current_state
-        print(f"Current arm state: {arm_state['O_T_EE']}")
+        # arm_state = self.panda.current_state
+        arm_state = self.panda.get_franka_arm_state()  # to ensure we have the latest state
+        # print(f"Current arm state: {arm_state['q']}")
         if not self.on_control:
             return
         controller_data = self.mq3.get_controller_data()
@@ -102,21 +116,23 @@ class MetaQuest3PandaController(RemoteDevice):
 
 if __name__ == "__main__":
     pyzlc.init(
-        "mq3_control",
-        "127.0.0.1",
-        group_name="MujocoRobotGroup",
-        group_port=7720,
+        "MujocoRobotClient",
+        "192.168.1.1",
+        group_port=7730,
+        group_name="DroidGroup",
+        log_level=pyzlc.LogLevel.DEBUG,
     )
-    robot = RemotePandaArm("MujocoRobot")
+    robot = RemotePandaArm("FrankaPanda")
     init_xr_node_manager("MQ3", "192.168.0.117")
     mq3 = MetaQuest3PandaController(
         "IRL-MQ3-2", robot
     )  # You can change the name by using simpubweb
     robot.connect()
+    pyzlc.register_subscriber_handler("FrankaPanda/franka_arm_state", print_state)
     robot.set_franka_arm_control_mode(ControlMode.CartesianImpedance)
     try:
         while True:
             mq3.update()
-            time.sleep(0.5)
+            pyzlc.sleep(0.01)
     except KeyboardInterrupt:
         pass

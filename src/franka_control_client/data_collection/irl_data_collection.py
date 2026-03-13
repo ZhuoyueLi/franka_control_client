@@ -1,24 +1,19 @@
-import queue
-import time
-from typing import Dict, Optional, List
-import numpy as np
-from concurrent.futures import Future
-
-from .data_collection_manager import DataCollectionManager, DataCollectionState
-from .irl_wrapper import IRL_HardwareDataWrapper,ImageDataWrapper
+import os
 import shutil
 import time
-import os
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime
 from pathlib import Path
-from queue import Full #used to handle full queue exception
-from concurrent.futures import ThreadPoolExecutor, wait
-from typing import Optional, NamedTuple, List
+from typing import List, Optional
 
 import cv2
 import numpy as np
 import pyzlc
 import torch
+
+from ..control_pair.control_pair import ControlPair
+from .data_collection_manager import DataCollectionManager, DataCollectionState
+from .irl_wrapper import IRL_HardwareDataWrapper, ImageDataWrapper
 
 
 class FollowerData:
@@ -150,6 +145,7 @@ class IRLDataCollection(DataCollectionManager):
         data_collectors: List[IRL_HardwareDataWrapper],
         data_dir: Path,
         task: str,
+        control_pair: Optional[ControlPair] = None,
         fps: int = 50,#for general
         writer_pool_max_workers: Optional[int] = None,
         writer_max_pending_writes: int = 4096,
@@ -159,6 +155,14 @@ class IRLDataCollection(DataCollectionManager):
         #data_dir
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(exist_ok=True,parents=True)
+        self.control_pair = control_pair
+        if self.control_pair is not None:
+            self.register_start_collecting_event(
+                self.control_pair.start_control_pair
+            )
+            self.register_stop_collecting_event(
+                self.control_pair.stop_control_pair
+            )
         #writer_pool preparation for cams
         self._max_pending_writes = int(writer_max_pending_writes)
         if writer_pool_max_workers is None:
@@ -315,6 +319,23 @@ class IRLDataCollection(DataCollectionManager):
         super()._stop_collecting()
    
         # self.data_save_future = None
+    def _reset_arm(self) -> None:
+        """Reset the robot arm to home/teleoperation.
+        
+        Called only when in WAITING state (control pair is not running).
+        """
+        if self.control_pair is None:
+            self._ui_console.log("No control pair configured for reset.")
+            return
+        self._ui_console.log("Resetting robot arm position...")
+        try:
+            # Reset the arm to home position
+            self.control_pair.control_reset()
+            time.sleep(3)  # Wait for the arm to reach the home position
+            self._ui_console.log("Robot arm reset to home position.")
+        except Exception as exc:
+            self._ui_console.log(f"Failed to reset arm: {exc}")
+
 
     def _reset_to_waiting(self) -> None:
         super()._reset_to_waiting()

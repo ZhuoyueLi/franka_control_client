@@ -26,14 +26,15 @@ from franka_control_client.robotiq_gripper.robotiq_gripper import (
 if __name__ == "__main__":
     pyzlc.init(
         "policy_inference",
-        "192.168.0.109",
+        "192.168.1.1",
         group_name="DroidGroup",
         group_port=7730,
     )
 
-    policy_name = "xvla"
-    obs_topic = f"{policy_name}/observation"
-    action_topic = f"{policy_name}/action"
+    # Checkpoint path from eval_config.yaml
+    checkpoint_path = "/home/irl-admin/chekpoints/4th_March_folding/pretrained_model"
+    task = "fold the scarf on the table." #"Pick up the bell pepper and place it in the bowl."
+    dataset_path = "/home/irl-admin/chekpoints/4th_March_folding"
 
     follower = PandaRobotiq(
         "PandaRobotiq",
@@ -42,6 +43,7 @@ if __name__ == "__main__":
     )
     control_pair = PolicyPandaControlPair(follower.panda_arm, follower.robotiq_gripper)
 
+    # Camera capture interval matches inference frequency (30 Hz = 0.033s)
     camera_left = ImageDataWrapper(
         CameraDevice("zed_left", preview=False), capture_interval=0.033, hw_name="zed_left"
     )
@@ -60,19 +62,19 @@ if __name__ == "__main__":
     data_collectors.append(RobotiqGripperDataWrapper(follower.robotiq_gripper))
 
     inference_cfg = LeRobotPolicyInferenceConfig(
-        policy_name=policy_name,
-        task="pepper",
-        fps=10,
-        obs_topic=obs_topic,
-        action_topic=action_topic,
+        checkpoint_path=checkpoint_path,
+        task=task,
+        fps=100,
+        device="cuda",
+        policy_dtype="bfloat16",
+        dataset_path=dataset_path,
     )
     inference_manager = LeRobotPolicyInference(
         data_collectors=data_collectors,
         control_pair=control_pair,
         cfg=inference_cfg,
     )
-
-    control_pair.control_rest()
+    
     try:
         inference_manager.run()
     finally:

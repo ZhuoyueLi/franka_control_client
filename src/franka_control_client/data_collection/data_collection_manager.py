@@ -20,6 +20,7 @@ class DataCollectionEvent(str, Enum):
     SAVE = "save"
     DISCARD = "discard"
     STAND_BY = "stand_by"
+    RESET = "reset"
     QUIT = "quit"
 
 
@@ -125,6 +126,12 @@ class DataCollectionManager(abc.ABC):
             DataCollectionState.EXITING,
             action=self._close,
         )
+        self._state_machine.register_transition(
+            DataCollectionState.WAITING,
+            DataCollectionEvent.RESET,
+            DataCollectionState.WAITING,
+            action=self._reset_arm,
+        )
 
     def register_start_collecting_event(
         self, handler: Callable[[], None]
@@ -167,11 +174,13 @@ class DataCollectionManager(abc.ABC):
             self._state_machine.trigger(DataCollectionEvent.DISCARD)
         elif key == "q":
             self._state_machine.trigger(DataCollectionEvent.QUIT)
+        elif key == "r":
+            self._state_machine.trigger(DataCollectionEvent.RESET)
 
     def _on_state_enter(self, state: DataCollectionState) -> None:
         if state == DataCollectionState.WAITING:
             self._ui_console.update_hint(
-                "Press 'n' to start collecting, or 'q' to quit"
+                "Press 'n' to start collecting, 'r' to reset, or 'q' to quit"
             )
         elif state == DataCollectionState.COLLECTING:
             self._ui_console.update_hint(
@@ -206,6 +215,10 @@ class DataCollectionManager(abc.ABC):
     def _stop_collecting(self) -> None:
         self._ui_console.update_hint("Stopping data collection...")
         self._stop_collecting_event.emit()
+
+    @abc.abstractmethod
+    def _reset_arm(self) -> None:
+        raise NotImplementedError
 
     def _reset_to_waiting(self) -> None:
         for collector in self.data_collectors:

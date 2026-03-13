@@ -127,18 +127,18 @@ class RemotePandaArm(RemoteDevice):
     @property
     def current_ee_position(self) -> Optional[List[float]]:
         """Return the current end-effector position (x, y, z)."""
-        state = self.current_state
+        state = self.arm_state_sub.get_latest()
         if state is None:
             return None
-        return state["O_T_EE"][:3]
+        return state["EE_pos"]
 
     @property
     def current_ee_rotation(self) -> Optional[List[float]]:
         """Return the current end-effector rotation (quaternion x, y, z, w)."""
-        state = self.current_state
+        state = self.arm_state_sub.get_latest()
         if state is None:
             return None
-        return state["O_T_EE"][3:7]
+        return state["EE_quat"]
 
     def get_franka_arm_state(self) -> PandaArmState:
         """Return a single state sample"""
@@ -210,6 +210,7 @@ class RemotePandaArm(RemoteDevice):
                 "Publishers disabled for this RemotePandaArm instance."
             )
         arr = np.asarray(joint_positions, dtype=np.float64).reshape(-1)
+        print(f"Sending joint position command: {arr}")
         if arr.size != 7:
             raise ValueError(f"Expected 7 joint angles, got {arr.size}")
         self.joint_position_publisher.publish(
