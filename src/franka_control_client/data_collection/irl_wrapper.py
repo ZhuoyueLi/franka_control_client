@@ -11,6 +11,7 @@ from ..franka_robot.panda_arm import RemotePandaArm
 from ..franka_robot.panda_gripper import RemotePandaGripper
 from ..robotiq_gripper.robotiq_gripper import RemoteRobotiqGripper
 from ..gello.gello import RemoteGello
+from ..vr.meta_quest3 import MQ3Controller
 
 class IRL_HardwareDataWrapper(abc.ABC):
 
@@ -198,6 +199,54 @@ class GelloDataWrapper(IRL_HardwareDataWrapper):
         #         f"Expected 1 Gello gripper value, got {gripper.size}."
         #     )
         return state
+
+    def discard(self) -> None:
+        pass
+
+    def reset(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+class MQ3DataWrapper(IRL_HardwareDataWrapper):
+    def __init__(self, robot: MQ3Controller, hw_name:str = "MQ3" , hw_type:str = "leader_robot") -> None:
+        self.robot=robot
+        self.hw_name=hw_name
+        super().__init__(hw_type,hw_name)
+
+    def capture_step(self) -> Dict[str, np.ndarray]:
+        state = self.robot.current_control_signal
+        if state is None:
+            raise ValueError("No MQ3 control signal data received.")
+        # arm_state = self.robot.current_state["gello_arm_state"]
+        # gripper_state = self.robot.current_state["gello_gripper_state"]
+        # if arm_state is None:
+        #     raise ValueError("No Gello arm state data received.")
+        # # joints = np.asarray(arm_state["joint_state"], dtype=np.float32).reshape(
+        # #     -1
+        # # )
+        # # if joints.size != 7:
+        # #     raise ValueError(
+        # #         f"Expected 7 Gello arm joints, got {joints.size}."
+        # #     )
+        # if gripper_state is None:
+        #     raise ValueError("No Gello gripper state data received.")
+        # # gripper = np.asarray(
+        # #     gripper_state["gripper"], dtype=np.float32
+        # # ).reshape(-1)
+        # # if gripper.size != 1:
+        # #     raise ValueError(
+        # #         f"Expected 1 Gello gripper value, got {gripper.size}."
+        # #     )
+        return {
+            "EE_pos": np.array(state["pos"], dtype=np.float32),
+            "EE_quat": np.array(state["rot"], dtype=np.float32),
+            "pos_vel": np.array(state["pos_vel"], dtype=np.float32),
+            "rot_vel": np.array(state["rot_vel"], dtype=np.float32),
+            "gripper_width": np.array(state["gripper_width"], dtype=np.float32),
+        }
 
     def discard(self) -> None:
         pass
