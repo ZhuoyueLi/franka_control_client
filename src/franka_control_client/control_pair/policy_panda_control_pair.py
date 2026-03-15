@@ -67,7 +67,7 @@ class PolicyPandaControlPair(ControlPair):
             return None
         joint_pos = np.asarray(current_state["q"], dtype=np.float32).reshape(-1)
         if joint_pos.size != 7:
-            pyzlc.warn(
+            pyzlc.error(
                 f"Unexpected current arm state size during control init: {joint_pos.size}"
             )
             return None
@@ -119,6 +119,7 @@ class PolicyPandaControlPair(ControlPair):
                     action = self._latest_action_chunk.popleft()
                     # print("len of action chunk:", len(self._latest_action_chunk))
                     self._latest_action = self._latest_action_chunk[-1].copy()
+                    # print("current action", action)
                     return action.copy()
                 #keep the latest action in the chunk as the current action until the next chunk comes in, to ensure smoother control when policy inference is faster than control loop
                 # print("only one action in the chunk")

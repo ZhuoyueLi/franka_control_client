@@ -34,7 +34,16 @@ class MQ3Controller(RemoteDevice):
         self.base_ee_rotation: Optional[List[float]] = None
         self.base_mq3_position: Optional[List[float]] = None
         self.base_mq3_rotation: Optional[List[float]] = None
-        self._current_control_signal: Optional[MQ3ControlSignal] = None
+        panda_state = self.panda_arm.current_state
+        if panda_state is None:
+            raise ValueError("No initial state data received from the robot.")
+        self._current_control_signal: Optional[MQ3ControlSignal] = MQ3ControlSignal(
+            pos=panda_state["EE_pos"],
+            rot=panda_state["EE_quat"],
+            pos_vel=[0.0, 0.0, 0.0],
+            rot_vel=[0.0, 0.0, 0.0],
+            gripper_width=0.08,
+        )
 
     @property
     def current_control_signal(self) -> Optional[MQ3ControlSignal]:
@@ -60,15 +69,15 @@ class MQ3Controller(RemoteDevice):
 
         # apply delta rotation to EE
         desired_rot = delta_rot * r_ee_base
-        self.panda_arm.send_cartesian_pose_command(
-            pos=desired_position.tolist(), rot=desired_rot.as_rotvec().tolist()
-        )
+        # self.panda_arm.send_cartesian_pose_command(
+        #     pos=desired_position.tolist(), rot=desired_rot.as_quat().tolist()
+        # )
         self._current_control_signal = MQ3ControlSignal(
             pos=desired_position.tolist(),
             rot=desired_rot.as_quat().tolist(),
             pos_vel=[0.0, 0.0, 0.0],
             rot_vel=[0.0, 0.0, 0.0],
-            gripper_width=0.8 * (1 - right_data["index_trigger"]),
+            gripper_width=right_data["index_trigger"],
         )
         return self._current_control_signal
 

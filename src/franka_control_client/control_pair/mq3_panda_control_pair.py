@@ -7,7 +7,6 @@ GRIPPER_SPEED = 0.7
 GRIPPER_FORCE = 0.3
 CONTROL_HZ: float = 500
 GRIPPER_DEADBAND: float = 1e-3
-CONTROL_MODE: ControlMode = ControlMode.HybridJointImpedance
 
 
 class MQ3PandaControlPair(ControlPair):
@@ -39,7 +38,7 @@ class MQ3PandaControlPair(ControlPair):
         )
         self.follower.robotiq_gripper.open()
         self.follower.panda_arm.move_franka_arm_to_joint_position(
-            [0.0, -0.785398, 0.0, -2.35619, 0.0, 1.5708, 0.785398]
+            [0.0, 0.0, 0.0, -2.15, 0.0, 2.15, 0.0]
         )
 
     def control_end(self) -> None:

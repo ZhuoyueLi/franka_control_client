@@ -235,9 +235,9 @@ class RemotePandaArm(RemoteDevice):
             )
         pos_arr = np.asarray(pos, dtype=np.float64).reshape(-1)
         rot_arr = np.asarray(rot, dtype=np.float64).reshape(-1)
-        if pos_arr.size != 3 or rot_arr.size != 3:
+        if pos_arr.size != 3 or rot_arr.size != 4:
             raise ValueError(
-                f"Expected 3 position values and 3 orientation values, got {pos_arr.size} and {rot_arr.size}"
+                f"Expected 3 position values and 4 orientation values, got {pos_arr.size} and {rot_arr.size}"
             )
         self.cartesian_pose_publisher.publish(
             CartesianPoseCommand(
