@@ -63,7 +63,7 @@ if __name__ == "__main__":
     data_collectors.append(PandaArmDataWrapper(follower.panda_arm))
     data_collectors.append(RobotiqGripperDataWrapper(follower.robotiq_gripper))
     # name = time.strftim  e("%Y%m%d_%H%M%S", time.localtime())
-    task = "test_40hz"
+    task = "pick_up_cylinder_on_the_top_of_cube"
     data_collection_manager = IRLDataCollection(
         data_collectors, 
         f"/home/irl-admin/xinkai/data_collection/{task}", 

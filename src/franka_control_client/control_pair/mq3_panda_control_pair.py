@@ -1,3 +1,5 @@
+import traceback
+
 from .control_pair import ControlPair
 from ..franka_robot.panda_arm import ControlMode
 from ..franka_robot.panda_robotiq import PandaRobotiq
@@ -40,6 +42,7 @@ class MQ3PandaControlPair(ControlPair):
         self.follower.panda_arm.move_franka_arm_to_joint_position(
             [0.0, 0.0, 0.0, -2.15, 0.0, 2.15, 0.0]
         )
+        self.leader.reset()
 
     def control_end(self) -> None:
         self.follower.panda_arm.set_franka_arm_control_mode(ControlMode.IDLE)
@@ -61,3 +64,4 @@ class MQ3PandaControlPair(ControlPair):
             self.control_end()
         except Exception as e:
             print(f"Control task encountered an error: {e}")
+            traceback.print_exc()
