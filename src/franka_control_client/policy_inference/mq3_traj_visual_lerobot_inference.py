@@ -31,16 +31,37 @@ class MQ3TrajVisualLeRobotInference(LeRobotPolicyInference):
             RobotModelId.FRANKA_PANDA_ROBOTIQ
         )
         self.last_chunk_traj: Optional[XRTrajectory] = None
+        self.history_way_points = []
+        self.history_traj: Optional[XRTrajectory] = None
         self.running = True
-        self.visualize_thread = threading.Thread(target=self._visualize_loop, daemon=True)
+        self.visualize_thread = threading.Thread(
+            target=self._visualize_loop, daemon=True
+        )
         self.visualize_thread.start()
 
     def _visualize_loop(self) -> None:
         while self.running:
+            if self.arm_wrapper is None:
+                pyzlc.sleep(0.1)
+                continue
             arm_state = self.arm_wrapper.arm.current_state
             if arm_state is not None:
                 self.mirror.apply_arm_state(np.array(arm_state["q"]))
-            time.sleep(0.02)
+            lastest_action = self.control_pair._get_latest_action()
+            if lastest_action is not None:
+                self.history_way_points.append(
+                    {
+                        "pos": lastest_action[:3].tolist(),
+                        "color": [1.0, 0.0, 0.0, 1.0],
+                    }
+                )
+                if self.history_traj is None:
+                    self.history_traj = self.mirror._cavns.create_trajectory(
+                        name="history_traj", waypoints=self.history_way_points
+                    )
+                else:
+                    self.history_traj.update(waypoints=self.history_way_points)
+            time.sleep(0.05)
 
     def _infer_step(self) -> None:
         # if self.last_timestamp is None:

@@ -64,16 +64,18 @@ class CartesianPolicyPandaControlPair(ControlPair):
         self._last_control_time: Optional[float] = None
         self._dt = 1.0 / self.control_hz  # time delta between control steps
 
+        self.last_command = None
+
     def _get_current_cartesian_pose(self) -> Optional[np.ndarray]:
         current_state = self.panda_arm.current_state
         if current_state is None or "EE_pos" not in current_state:
             return None
-        cartesian_pos = np.asarray(current_state["EE_pos"], dtype=np.float32).reshape(
-            -1
-        )
-        cartesian_rot = np.asarray(current_state["EE_quat"], dtype=np.float32).reshape(
-            -1
-        )
+        cartesian_pos = np.asarray(
+            current_state["EE_pos"], dtype=np.float32
+        ).reshape(-1)
+        cartesian_rot = np.asarray(
+            current_state["EE_quat"], dtype=np.float32
+        ).reshape(-1)
         cartesian_pose = np.concatenate([cartesian_pos, cartesian_rot])
         if cartesian_pose.size != 7:
             pyzlc.error(
@@ -105,13 +107,17 @@ class CartesianPolicyPandaControlPair(ControlPair):
             )
 
         if chunk.shape[-1] < 8:
-            raise ValueError(f"Expected action size >= 8, got {chunk.shape[-1]}")
+            raise ValueError(
+                f"Expected action size >= 8, got {chunk.shape[-1]}"
+            )
         if chunk.shape[0] < 1 or chunk.shape[1] < 1:
             raise ValueError(
                 f"Action chunk must contain at least one action, got {chunk.shape}"
             )
 
-        action_queue = deque(np.array(action, copy=True) for action in chunk[0])
+        action_queue = deque(
+            np.array(action, copy=True) for action in chunk[0]
+        )
         with self._action_lock:
             self._latest_action = action_queue[-1].copy()
             self._latest_action_chunk = action_queue
@@ -214,9 +220,9 @@ class CartesianPolicyPandaControlPair(ControlPair):
         Returns:
             The cartesian position command that was sent.
         """
-        cartesian_waypoints = np.asarray(cartesian_waypoints, dtype=np.float32).reshape(
-            -1
-        )
+        cartesian_waypoints = np.asarray(
+            cartesian_waypoints, dtype=np.float32
+        ).reshape(-1)
         if cartesian_waypoints.size != 7:
             raise ValueError(
                 f"Expected 7 cartesian targets, got {cartesian_waypoints.size}"
@@ -233,7 +239,10 @@ class CartesianPolicyPandaControlPair(ControlPair):
 
         max_vel = VELOCITY_LIMITS_NORM * max_vel_norm_factor
         waypoints, _ = self._generate_waypoints_within_limits(
-            self._last_cartesian_pos, cartesian_waypoints, self.control_hz, max_vel
+            self._last_cartesian_pos,
+            cartesian_waypoints,
+            self.control_hz,
+            max_vel,
         )
         # too jerky to actuate the entire waypoint sequence in one control step,
         # so we send one waypoint at a time in each control step.
@@ -245,7 +254,9 @@ class CartesianPolicyPandaControlPair(ControlPair):
         #     self._last_cartesian_pos = np.asarray(cartesian_cmd, dtype=np.float32)
         # print(f"Generated {len(waypoints)} waypoints with max velocity {max_vel:.3f} rad/s")
         cartesian_cmd = (
-            waypoints[0].numpy() if len(waypoints) > 0 else cartesian_waypoints.copy()
+            waypoints[0].numpy()
+            if len(waypoints) > 0
+            else cartesian_waypoints.copy()
         )
         self.panda_arm.send_cartesian_pose_command(
             cartesian_cmd[:3], cartesian_cmd[3:7]
@@ -254,10 +265,14 @@ class CartesianPolicyPandaControlPair(ControlPair):
         return self._last_cartesian_pos.copy()
 
     def control_reset(self) -> None:
-        self.panda_arm.set_franka_arm_control_mode(ControlMode.CartesianImpedance)
+        self.panda_arm.set_franka_arm_control_mode(
+            ControlMode.CartesianImpedance
+        )
         current_cartesian_pos = self._get_current_cartesian_pose()
         if current_cartesian_pos is None:
-            pyzlc.error("Unable to seed control from current arm state during startup")
+            pyzlc.error(
+                "Unable to seed control from current arm state during startup"
+            )
             return
         self._last_cartesian_pos = current_cartesian_pos.copy()
         self.panda_arm.send_cartesian_pose_command(
@@ -318,7 +333,9 @@ class CartesianPolicyPandaControlPair(ControlPair):
         # End_time = time.perf_counter()
         # print(f"command took {End_time - start_time:.3f} seconds")
 
-    def _log_action_debug(self, joint_pos: np.ndarray, gripper_cmd: float) -> None:
+    def _log_action_debug(
+        self, joint_pos: np.ndarray, gripper_cmd: float
+    ) -> None:
         now = time.time()
         if (now - self._last_action_log_ts) >= ACTION_LOG_INTERVAL_S:
             pyzlc.info(
@@ -363,7 +380,9 @@ class CartesianPolicyPandaControlPair(ControlPair):
                 # end_time = time.perf_counter()
                 # print(f"Control step took {end_time - start:.3f} seconds")
                 if time.perf_counter() - start < (1.0 / self.control_hz):
-                    pyzlc.sleep((1.0 / self.control_hz) - (time.perf_counter() - start))
+                    pyzlc.sleep(
+                        (1.0 / self.control_hz) - (time.perf_counter() - start)
+                    )
 
             self.control_end()
         except Exception as e:
