@@ -15,9 +15,9 @@ from franka_control_client.policy_inference.irl_wrapper import (
     RobotiqGripperDataWrapper,
 )
 from franka_control_client.policy_inference.lerobot_policy_inference import (
-    LeRobotPolicyInference,
     LeRobotPolicyInferenceConfig,
 )
+from franka_control_client.policy_inference.mq3_traj_visual_lerobot_inference import MQ3TrajVisualLeRobotInference
 from franka_control_client.robotiq_gripper.robotiq_gripper import (
     RemoteRobotiqGripper,
 )
@@ -43,7 +43,7 @@ if __name__ == "__main__":
         RemotePandaArm("FrankaPanda"),
         RemoteRobotiqGripper("FrankaPanda"),
     )
-    control_pair = CartesianPolicyPandaControlPair(follower.panda_arm, follower.robotiq_gripper)
+    control_pair = CartesianPolicyPandaControlPair(follower.panda_arm, follower.robotiq_gripper, 50)
 
     # Camera capture interval matches inference frequency (30 Hz = 0.033s)
     camera_left = ImageDataWrapper(
@@ -66,12 +66,12 @@ if __name__ == "__main__":
     inference_cfg = LeRobotPolicyInferenceConfig(
         checkpoint_path=checkpoint_path,
         task=task,
-        fps=7,
+        fps=1,
         device="cuda",
         policy_dtype="bfloat16",
         dataset_path=dataset_path,
     )
-    inference_manager = LeRobotPolicyInference(
+    inference_manager = MQ3TrajVisualLeRobotInference(
         data_collectors=data_collectors,
         control_pair=control_pair,
         cfg=inference_cfg,

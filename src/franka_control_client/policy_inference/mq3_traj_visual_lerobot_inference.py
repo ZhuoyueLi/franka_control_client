@@ -2,7 +2,8 @@ from typing import List, Optional
 import time
 import torch
 import pyzlc
-
+import numpy as np
+import threading
 
 from digital_twin.models import RobotModelId
 from digital_twin.simulation.mirror import RobotMirror
@@ -30,6 +31,16 @@ class MQ3TrajVisualLeRobotInference(LeRobotPolicyInference):
             RobotModelId.FRANKA_PANDA_ROBOTIQ
         )
         self.last_chunk_traj: Optional[XRTrajectory] = None
+        self.running = True
+        self.visualize_thread = threading.Thread(target=self._visualize_loop, daemon=True)
+        self.visualize_thread.start()
+
+    def _visualize_loop(self) -> None:
+        while self.running:
+            arm_state = self.arm_wrapper.arm.current_state
+            if arm_state is not None:
+                self.mirror.apply_arm_state(np.array(arm_state["q"]))
+            time.sleep(0.02)
 
     def _infer_step(self) -> None:
         # if self.last_timestamp is None:
@@ -87,22 +98,21 @@ class MQ3TrajVisualLeRobotInference(LeRobotPolicyInference):
             post_action_chunk[:, chunk_idx, :] = processed_action
 
         post_action_chunk = post_action_chunk.float().cpu().numpy()
-        if self.last_chunk_traj is not None:
-            # pyzlc.info(f"Last chunk trajectory: {self.last_chunk_traj}")
-            self.last_chunk_traj.delete()
         way_points = []
         for idx in range(len(post_action_chunk[0])):
-            # pyzlc.info(f"Postprocessed action chunk for batch {idx}: {post_action_chunk[idx]}")
+            # pyzlc.info(f"Postprocessed action chunk for batch {idx}: {post_action_chunk[0][idx]}")
             way_points.append(
                 {
                     "pos": post_action_chunk[0][idx][:3].tolist(),
                     "color": [0.0, 1.0, 0.0, 1.0],
                 }
             )
-
-        self.last_chunk_traj = self.mirror._cavns.create_trajectory(
-            name="ee_trajectory", waypoints=way_points
-        )
+        if self.last_chunk_traj is None:
+            self.last_chunk_traj = self.mirror._cavns.create_trajectory(
+                name="ee_trajectory", waypoints=way_points
+            )
+        else:
+            self.last_chunk_traj.update(waypoints=way_points)
         try:
             # single_action
             # self.control_pair.update_action(action_vec)
@@ -118,3 +128,9 @@ class MQ3TrajVisualLeRobotInference(LeRobotPolicyInference):
         if sleep_time > 0.001:
             time.sleep(sleep_time)
             # print(f"Inference step took {elapsed:.5f} seconds, slept for {sleep_time:.5f} seconds to maintain {self.fps} FPS.")
+
+    def _close(self):
+        self.running = False
+        if self.visualize_thread.is_alive():
+            self.visualize_thread.join(timeout=1.0)
+        return super()._close()

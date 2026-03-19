@@ -7,11 +7,11 @@ from franka_control_client.franka_robot.panda_arm import (
 
 if __name__ == "__main__":
     pyzlc.init(
-        "MujocoRobotClient",
-        "127.0.0.1",
-        group_name="MujocoRobotGroup",
-        log_level=pyzlc.LogLevel.INFO,
+        "policy_inference",
+        "192.168.1.1",
+        group_name="DroidGroup",
+        group_port=7730,
     )
-    robot = RemotePandaArm("MujocoRobot")
+    robot = RemotePandaArm("FrankaPanda")
     robot.connect()
-    robot.set_franka_arm_control_mode(ControlMode.CartesianImpedance)
+    robot.set_franka_arm_control_mode(ControlMode.IDLE)

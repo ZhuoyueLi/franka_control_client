@@ -2,7 +2,7 @@ import time
 import abc
 from enum import Enum
 from typing import Callable, Dict, Optional, List, Tuple
-
+import traceback
 
 from .utils import NonBlockingKeyPress, UIConsole, VoidEvent
 # from .wrapper import HardwareDataWrapper
@@ -167,6 +167,7 @@ class PolicyInferenceManager(abc.ABC):
                         self._reset_to_waiting()
                     # time.sleep(0.001)
         finally:
+            traceback.print_exc()
             self._close()
 
     def _handle_keypress(self, key: str) -> None:
