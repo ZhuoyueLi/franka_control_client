@@ -1,4 +1,5 @@
 import abc
+import traceback
 from typing import Optional
 import threading
 import pyzlc
@@ -57,3 +58,4 @@ class ControlPair(abc.ABC):
             self.control_end()
         except Exception as e:
             print(f"Control task encountered an error: {e}")
+            traceback.print_exc()

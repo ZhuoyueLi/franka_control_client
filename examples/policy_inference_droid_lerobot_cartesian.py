@@ -6,6 +6,7 @@ from franka_control_client.camera.camera import CameraDevice
 from franka_control_client.control_pair.cartesian_policy_panda_control_pair import (
     CartesianPolicyPandaControlPair,
 )
+from franka_control_client.control_pair.pil_panda_control_pair import PILPandaControlPair
 from franka_control_client.franka_robot.panda_arm import RemotePandaArm
 from franka_control_client.franka_robot.panda_robotiq import PandaRobotiq
 from franka_control_client.policy_inference.irl_wrapper import (
@@ -43,7 +44,7 @@ if __name__ == "__main__":
         RemotePandaArm("FrankaPanda"),
         RemoteRobotiqGripper("FrankaPanda"),
     )
-    control_pair = CartesianPolicyPandaControlPair(follower.panda_arm, follower.robotiq_gripper, 50)
+    control_pair = PILPandaControlPair(follower.panda_arm, follower.robotiq_gripper, 50)
 
     # Camera capture interval matches inference frequency (30 Hz = 0.033s)
     camera_left = ImageDataWrapper(

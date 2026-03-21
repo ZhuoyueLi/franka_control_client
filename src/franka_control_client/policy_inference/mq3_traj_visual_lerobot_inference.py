@@ -9,6 +9,8 @@ from digital_twin.models import RobotModelId
 from digital_twin.simulation.mirror import RobotMirror
 from simpub.core import XRTrajectory
 
+from franka_control_client.control_pair.cartesian_policy_panda_control_pair import CartesianPolicyPandaControlPair
+
 from ..control_pair.policy_panda_control_pair import PolicyPandaControlPair
 
 from ..policy_inference.irl_wrapper import IRL_HardwareDataWrapper
@@ -23,7 +25,7 @@ class MQ3TrajVisualLeRobotInference(LeRobotPolicyInference):
     def __init__(
         self,
         data_collectors: List[IRL_HardwareDataWrapper],
-        control_pair: PolicyPandaControlPair,
+        control_pair: CartesianPolicyPandaControlPair,
         cfg: LeRobotPolicyInferenceConfig,
     ) -> None:
         super().__init__(data_collectors, control_pair, cfg)
@@ -33,6 +35,7 @@ class MQ3TrajVisualLeRobotInference(LeRobotPolicyInference):
         self.last_chunk_traj: Optional[XRTrajectory] = None
         self.history_way_points = []
         self.history_traj: Optional[XRTrajectory] = None
+        self.reset_history_event = threading.Event()
         self.running = True
         self.visualize_thread = threading.Thread(
             target=self._visualize_loop, daemon=True
@@ -47,20 +50,35 @@ class MQ3TrajVisualLeRobotInference(LeRobotPolicyInference):
             arm_state = self.arm_wrapper.arm.current_state
             if arm_state is not None:
                 self.mirror.apply_arm_state(np.array(arm_state["q"]))
-            lastest_action = self.control_pair._get_latest_action()
-            if lastest_action is not None:
+            if hasattr(self.control_pair, "get_lastest_command"):
+                lastest_action = self.control_pair.get_lastest_command()
+                if self.reset_history_event.is_set():
+                    self.history_way_points = []
+                    self.history_traj = None
+                    self.reset_history_event.clear()
+                if lastest_action is not None:
+                    self.history_way_points.append(
+                        {
+                            "pos": lastest_action[:3].tolist(),
+                            "color": [1.0, 0.0, 0.0, 1.0],
+                        }
+                    )
+                    if self.history_traj is None:
+                        self.history_traj = self.mirror._cavns.create_trajectory(
+                            name="history_traj", waypoints=self.history_way_points
+                        )
+                    else:
+                        self.history_traj.update(waypoints=self.history_way_points)
+            elif hasattr(self.control_pair, "leader") :
+                control_signal = self.current_control_pair.leader.current_control_signal
+                if control_signal is None:
+                    continue
                 self.history_way_points.append(
                     {
-                        "pos": lastest_action[:3].tolist(),
-                        "color": [1.0, 0.0, 0.0, 1.0],
+                        "pos": control_signal["pos"],
+                        "color": [0.0, 0.0, 1.0, 1.0],
                     }
                 )
-                if self.history_traj is None:
-                    self.history_traj = self.mirror._cavns.create_trajectory(
-                        name="history_traj", waypoints=self.history_way_points
-                    )
-                else:
-                    self.history_traj.update(waypoints=self.history_way_points)
             time.sleep(0.05)
 
     def _infer_step(self) -> None:
@@ -155,3 +173,9 @@ class MQ3TrajVisualLeRobotInference(LeRobotPolicyInference):
         if self.visualize_thread.is_alive():
             self.visualize_thread.join(timeout=1.0)
         return super()._close()
+
+
+    def _reset_arm(self):
+        self.reset_history_event.set()
+        self.control_pair.clear_lastest_command()
+        return super()._reset_arm()

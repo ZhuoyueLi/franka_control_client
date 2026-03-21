@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+import traceback
 from typing import Optional, Union
 
 import numpy as np
@@ -346,3 +347,4 @@ class PolicyPandaControlPair(ControlPair):
             self.control_end()
         except Exception as e:
             print(f"Control task encountered an error: {e}")
+            traceback.print_exc()

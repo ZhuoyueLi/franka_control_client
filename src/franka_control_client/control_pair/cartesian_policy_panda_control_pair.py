@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+import traceback
 from typing import Optional, Union
 
 import numpy as np
@@ -51,6 +52,8 @@ class CartesianPolicyPandaControlPair(ControlPair):
         self._action_lock = (
             threading.Lock()
         )  # only one of the update_action and control_step visit latest_action at the same time
+        self._command_lock = threading.Lock()  # ensure thread-safe command sending
+        self._lastest_command = None  # store the latest command for debugging or visualization
         self._latest_action: Optional[np.ndarray] = None
         self._latest_action_chunk: deque[np.ndarray] = deque()
         self._last_gripper_cmd: Optional[float] = None
@@ -65,6 +68,16 @@ class CartesianPolicyPandaControlPair(ControlPair):
         self._dt = 1.0 / self.control_hz  # time delta between control steps
 
         self.last_command = None
+
+    def get_lastest_command(self) -> Optional[np.ndarray]:
+        with self._command_lock:
+            if self._lastest_command is not None:
+                return self._lastest_command.copy()
+            return None
+
+    def clear_lastest_command(self) -> None:
+        with self._command_lock:
+            self._lastest_command = None
 
     def _get_current_cartesian_pose(self) -> Optional[np.ndarray]:
         current_state = self.panda_arm.current_state
@@ -261,7 +274,10 @@ class CartesianPolicyPandaControlPair(ControlPair):
         self.panda_arm.send_cartesian_pose_command(
             cartesian_cmd[:3], cartesian_cmd[3:7]
         )
+        # print(f"Sent cartesian command: {cartesian_cmd}")
         self._last_cartesian_pos = np.asarray(cartesian_cmd, dtype=np.float32)
+        with self._command_lock:
+            self._lastest_command = cartesian_cmd.copy()
         return self._last_cartesian_pos.copy()
 
     def control_reset(self) -> None:
@@ -387,3 +403,4 @@ class CartesianPolicyPandaControlPair(ControlPair):
             self.control_end()
         except Exception as e:
             print(f"Control task encountered an error: {e}")
+            traceback.print_exc()
