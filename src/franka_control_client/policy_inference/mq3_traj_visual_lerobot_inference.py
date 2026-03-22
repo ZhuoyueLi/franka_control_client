@@ -50,8 +50,8 @@ class MQ3TrajVisualLeRobotInference(LeRobotPolicyInference):
             arm_state = self.arm_wrapper.arm.current_state
             if arm_state is not None:
                 self.mirror.apply_arm_state(np.array(arm_state["q"]))
-            if hasattr(self.control_pair, "get_lastest_command"):
-                lastest_action = self.control_pair.get_lastest_command()
+            if hasattr(self.control_pair.current_control_pair, "get_lastest_command"):
+                lastest_action = self.control_pair.current_control_pair.get_lastest_command()
                 if self.reset_history_event.is_set():
                     self.history_way_points = []
                     self.history_traj = None
@@ -69,16 +69,25 @@ class MQ3TrajVisualLeRobotInference(LeRobotPolicyInference):
                         )
                     else:
                         self.history_traj.update(waypoints=self.history_way_points)
-            elif hasattr(self.control_pair, "leader") :
-                control_signal = self.current_control_pair.leader.current_control_signal
+            # elif hasattr(self.control_pair.current_control_pair, "leader"):
+            else:
+                print("Using leader control signal for visualization")
+                control_signal = self.control_pair.current_control_pair.leader.current_control_signal
                 if control_signal is None:
                     continue
+                print(f"Current control signal: {control_signal}")
                 self.history_way_points.append(
                     {
                         "pos": control_signal["pos"],
                         "color": [0.0, 0.0, 1.0, 1.0],
                     }
                 )
+                if self.history_traj is None:
+                    self.history_traj = self.mirror._cavns.create_trajectory(
+                        name="history_traj", waypoints=self.history_way_points
+                    )
+                else:
+                    self.history_traj.update(waypoints=self.history_way_points)
             time.sleep(0.05)
 
     def _infer_step(self) -> None:
