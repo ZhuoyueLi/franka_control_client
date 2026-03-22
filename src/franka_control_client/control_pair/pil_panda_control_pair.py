@@ -3,13 +3,16 @@ from __future__ import annotations
 import threading
 import time
 import traceback
-from typing import Union
+from typing import Optional, Union
 
 import numpy as np
-import torch
+import enum
 import pyzlc
 
-from franka_control_client.control_pair.policy_panda_control_pair import PolicyPandaControlPair
+from franka_control_client.control_pair.policy_panda_control_pair import (
+    PolicyPandaControlPair,
+)
+from ..data_collection.pil_irl_vr_data_collection import PILIRLDataCollection
 
 from ..franka_robot.panda_robotiq import PandaRobotiq
 
@@ -37,6 +40,12 @@ DEFAULT_POSITION = (0.0, 0.0, 0.0, -2.15, 0.0, 2.15, 0.0)
 # Calculate velocity limits using the standard approach from training
 VELOCITY_LIMITS = np.array([[-4 * np.pi / 2, 4 * np.pi / 2]] * 7).T / 32
 VELOCITY_LIMITS_NORM = np.linalg.norm(VELOCITY_LIMITS)
+
+
+class PILMode(enum.Enum):
+    POLICY = "policy"
+    INTERRUPT = "interrupt"
+    REPLAY = "replay"
 
 
 class PILPandaControlPair(CartesianPolicyPandaControlPair):
@@ -67,19 +76,33 @@ class PILPandaControlPair(CartesianPolicyPandaControlPair):
         )
 
         self.current_control_pair: ControlPair = self.policy_pair
+        self.current_state = PILMode.POLICY
         self.control_pair_lock = threading.Lock()
 
-        self.mq3_controller.mq3.register_trigger_press_event("hand_trigger", "right", self.switch_to_interrupt_control)
-        self.mq3_controller.mq3.register_trigger_release_event("hand_trigger", "right", self.switch_to_policy_control)
+        self.mq3_controller.mq3.register_trigger_press_event(
+            "hand_trigger", "right", self.switch_to_interrupt_control
+        )
+        self.mq3_controller.mq3.register_trigger_release_event(
+            "hand_trigger", "right", self.switch_to_policy_control
+        )
+
+        self.data_manager: Optional[PILIRLDataCollection] = None
+
+    def register_history(self, data_manager: PILIRLDataCollection) -> None:
+        self.data_manager = data_manager
 
     def switch_to_policy_control(self) -> None:
+        self.current_state = PILMode.POLICY
         with self.control_pair_lock:
             self.current_control_pair = self.policy_pair
+        self.reset_action()  # Clear any residual commands when switching back to policy control
         print("Switched to policy control")
 
     def switch_to_interrupt_control(self) -> None:
+        self.current_state = PILMode.INTERRUPT
         with self.control_pair_lock:
             self.current_control_pair = self.interrupt_control_pair
+        self.reset_action()  # Clear any residual commands when switching to interrupt control
         print("Switched to interrupt control")
 
     def _control_task(self) -> None:
@@ -87,6 +110,7 @@ class PILPandaControlPair(CartesianPolicyPandaControlPair):
             self.control_reset()
             while self.is_running:
                 start = time.perf_counter()
+                self._replay()
                 with self.control_pair_lock:
                     self.current_control_pair.control_step()
                 # end_time = time.perf_counter()
@@ -111,3 +135,24 @@ class PILPandaControlPair(CartesianPolicyPandaControlPair):
 
     def reset_action(self):
         super().reset_action()
+
+    def _replay(self):
+        previous_state = self.current_state
+        while True:
+            data = (
+                self.mq3_controller.mq3.get_controller_data()
+            )  # Ensure we have the latest data from MQ3, even if not used in policy control
+            if data is None or not data["X"] or self.data_manager is None:
+                break
+            self.current_state = PILMode.REPLAY
+            pos, quat, gripper_width = (
+                self.data_manager.pop()
+            )  # Pop the oldest data point to maintain sync with control steps
+            self.panda_arm.send_cartesian_pose_command(pos=pos, rot=quat)
+            self.gripper.send_grasp_command(
+                position=gripper_width,
+                speed=GRIPPER_SPEED,
+                force=GRIPPER_FORCE,
+                blocking=False,
+            )
+        self.current_state = previous_state

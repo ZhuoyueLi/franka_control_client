@@ -13,9 +13,10 @@ from ..robotiq_gripper.robotiq_gripper import RemoteRobotiqGripper
 from ..gello.gello import RemoteGello
 from ..vr.meta_quest3 import MQ3Controller
 
+
 class IRL_HardwareDataWrapper(abc.ABC):
 
-    def __init__(self, hw_type:str,hw_name:str) -> None:
+    def __init__(self, hw_type: str, hw_name: str) -> None:
         self.hw_type = hw_type
         self.hw_name = hw_name
 
@@ -39,10 +40,16 @@ class IRL_HardwareDataWrapper(abc.ABC):
 
 
 class ImageDataWrapper(IRL_HardwareDataWrapper):
-    def __init__(self, camera_device: CameraDevice,hw_name:str , hw_type:str = "camera",capture_interval:int = 0.033) -> None:
+    def __init__(
+        self,
+        camera_device: CameraDevice,
+        hw_name: str,
+        hw_type: str = "camera",
+        capture_interval: int = 0.033,
+    ) -> None:
         self.camera_device = camera_device
         self.capture_interval = capture_interval
-        super().__init__(hw_type,hw_name)
+        super().__init__(hw_type, hw_name)
 
     def capture_step(self) -> Optional[np.ndarray]:
         # Implement the logic to save image data from the camera device
@@ -60,7 +67,7 @@ class ImageDataWrapper(IRL_HardwareDataWrapper):
                 f"({self.camera_device.size[0]}, {self.camera_device.size[1]}, 3), "
                 f"got {image_data.shape}"
             )
-        
+
         return image_data
 
     def discard(self) -> None:
@@ -77,9 +84,14 @@ class ImageDataWrapper(IRL_HardwareDataWrapper):
 
 
 class PandaArmDataWrapper(IRL_HardwareDataWrapper):
-    def __init__(self, arm: RemotePandaArm,hw_name:str = "FrankaPanda" , hw_type:str = "follower_arm") -> None:
+    def __init__(
+        self,
+        arm: RemotePandaArm,
+        hw_name: str = "FrankaPanda",
+        hw_type: str = "follower_arm",
+    ) -> None:
         self.arm = arm
-        super().__init__(hw_type,hw_name)
+        super().__init__(hw_type, hw_name)
 
     def capture_step(self) -> Dict[str, np.ndarray]:
         # Implement the logic to save robot state data
@@ -109,9 +121,14 @@ class PandaArmDataWrapper(IRL_HardwareDataWrapper):
 
 
 class PandaGripperDataWrapper(IRL_HardwareDataWrapper):
-    def __init__(self, gripper: RemotePandaGripper,hw_name:str = "FrankaPanda" , hw_type:str = "follower_gripper") -> None:
+    def __init__(
+        self,
+        gripper: RemotePandaGripper,
+        hw_name: str = "FrankaPanda",
+        hw_type: str = "follower_gripper",
+    ) -> None:
         self.gripper = gripper
-        super().__init__(hw_type,hw_name)
+        super().__init__(hw_type, hw_name)
 
     def capture_step(self) -> Dict[str, np.ndarray]:
         state = self.gripper.current_state
@@ -136,9 +153,14 @@ class PandaGripperDataWrapper(IRL_HardwareDataWrapper):
 
 
 class RobotiqGripperDataWrapper(IRL_HardwareDataWrapper):
-    def __init__(self, gripper: RemoteRobotiqGripper,hw_name:str = "FrankaPanda" , hw_type:str = "follower_gripper") -> None:
+    def __init__(
+        self,
+        gripper: RemoteRobotiqGripper,
+        hw_name: str = "FrankaPanda",
+        hw_type: str = "follower_gripper",
+    ) -> None:
         self.gripper = gripper
-        super().__init__(hw_type,hw_name)
+        super().__init__(hw_type, hw_name)
 
     def capture_step(self) -> Dict[str, np.ndarray]:
         state = self.gripper.current_state
@@ -170,11 +192,17 @@ class RobotiqGripperDataWrapper(IRL_HardwareDataWrapper):
     def __getattr__(self, name):
         return getattr(self.gripper, name)
 
+
 class GelloDataWrapper(IRL_HardwareDataWrapper):
-    def __init__(self, robot: RemoteGello,hw_name:str = "Gello" , hw_type:str = "leader_robot") -> None:
-        self.robot=robot
-        self.hw_name=hw_name
-        super().__init__(hw_type,hw_name)
+    def __init__(
+        self,
+        robot: RemoteGello,
+        hw_name: str = "Gello",
+        hw_type: str = "leader_robot",
+    ) -> None:
+        self.robot = robot
+        self.hw_name = hw_name
+        super().__init__(hw_type, hw_name)
 
     def capture_step(self) -> Dict[str, np.ndarray]:
         state = self.robot.current_state
@@ -211,10 +239,15 @@ class GelloDataWrapper(IRL_HardwareDataWrapper):
 
 
 class MQ3DataWrapper(IRL_HardwareDataWrapper):
-    def __init__(self, robot: MQ3Controller, hw_name:str = "MQ3" , hw_type:str = "leader_robot") -> None:
-        self.robot=robot
-        self.hw_name=hw_name
-        super().__init__(hw_type,hw_name)
+    def __init__(
+        self,
+        robot: MQ3Controller,
+        hw_name: str = "MQ3",
+        hw_type: str = "leader_robot",
+    ) -> None:
+        self.robot = robot
+        self.hw_name = hw_name
+        super().__init__(hw_type, hw_name)
 
     def capture_step(self) -> Dict[str, np.ndarray]:
         state = self.robot.current_control_signal
@@ -245,7 +278,9 @@ class MQ3DataWrapper(IRL_HardwareDataWrapper):
             "EE_quat": np.array(state["rot"], dtype=np.float32),
             "pos_vel": np.array(state["pos_vel"], dtype=np.float32),
             "rot_vel": np.array(state["rot_vel"], dtype=np.float32),
-            "gripper_width": np.array(state["gripper_width"], dtype=np.float32),
+            "gripper_width": np.array(
+                state["gripper_width"], dtype=np.float32
+            ),
         }
 
     def discard(self) -> None:
