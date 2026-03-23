@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
+import threading
 
 import cv2
 import numpy as np
@@ -14,14 +15,13 @@ import torch
 from ..control_pair.control_pair import ControlPair
 from .data_collection_manager import DataCollectionManager, DataCollectionState
 from .irl_wrapper import IRL_HardwareDataWrapper, ImageDataWrapper
-
+from .utils import NonBlockingKeyPress
 
 class FollowerData:
     def __init__(self):
         # self.timestamp_ms_list = []
         self.EE_pos = []
         self.EE_quat = []
-        self.source = []
         self.O_T_EE_list = []
         # self.O_T_EE_d_list = []
         self.q_list = []
@@ -44,9 +44,10 @@ class FollowerData:
     #     # self.tau_ext_hat_filtered_list.append(state.tau_ext_hat_filtered)
     #     self.gripper_state_list[]
     def pop(self):
+        if len(self.EE_pos) == 0:
+            return
         self.EE_pos.pop()
         self.EE_quat.pop()
-        self.source.pop()
         self.O_T_EE_list.pop()
         # self.O_T_EE_d_list.pop()
         self.q_list.pop()
@@ -78,7 +79,6 @@ class FollowerData:
         paths = [
             path / "EE_pos.pt",
             path / "EE_quat.pt",
-            path / "source.pt",
             # path / "timestamp_ms.pt",
             path / "ee_pos.pt",
             # path / "O_T_EE_d.pt",
@@ -109,6 +109,7 @@ class LeaderData:
         # self.O_T_EE_d_list = []
         self.EE_pos = []
         self.EE_quat = []
+        self.source = []
         # self.q_list = []
         # self.q_d_list = []
         # self.dq_list = []
@@ -138,6 +139,9 @@ class LeaderData:
         # self.gripper_width_list.pop()
         # self.gripper_state_list.pop()
         # self.gripper_command_list.pop()
+        if len(self.EE_pos) == 0:
+            return
+        self.source.pop()
         return (
             self.EE_pos.pop().detach().cpu().numpy(),
             self.EE_quat.pop().detach().cpu().numpy(),
@@ -152,6 +156,7 @@ class LeaderData:
             # torch.stack(self.O_T_EE_d_list),
             torch.stack(self.EE_pos),
             torch.stack(self.EE_quat),
+            torch.stack(self.source),
             # torch.stack(self.q_list),
             # torch.stack(self.q_d_list),
             # torch.stack(self.dq_list),
@@ -166,6 +171,7 @@ class LeaderData:
             # path / "O_T_EE_d.pt",
             path / "EE_pos.pt",
             path / "EE_quat.pt",
+            path / "source",
             # path / "joint_pos.pt",
             # path / "q_d.pt",
             # path / "dq.pt",
@@ -239,10 +245,19 @@ class PILIRLDataCollection(DataCollectionManager):
             self.camera_streams
         )  # Track last capture time for each camera
         self._last_robot_time: Optional[float] = None
+        self.data_lock = threading.Lock()
+        self.pause_event = threading.Event()
 
-    def pop(self) -> Tuple:
-        self.leader_robot_data.pop()
-        return self.follower_robot_data.pop()
+    def set_pause(self, flag: bool):
+        if flag:
+            self.pause_event.set()
+        else:
+            self.pause_event.clear()
+
+    def pop(self):
+        with self.data_lock:
+            self.follower_robot_data.pop()
+            return self.leader_robot_data.pop()
 
     def _start_collecting(self) -> None:
         # Emit start-collection event (e.g., start control pair).
@@ -295,11 +310,11 @@ class PILIRLDataCollection(DataCollectionManager):
             leader_state["EE_quat"] = policy_control_signal[3:7]
             # leader_state["gello_arm_state"]["joint_state"] = policy_control_signal.get("joint_state", leader_state["gello_arm_state"]["joint_state"])
             leader_state["gripper_width"] = policy_control_signal[-1] * 0.08
-            self.follower_robot_data.source.append(
+            self.leader_robot_data.source.append(
                 0.0
             )  # Mark this data point as coming from policy control
         else:
-            self.follower_robot_data.source.append(
+            self.leader_robot_data.source.append(
                 1.0
             )  # Mark this data point as coming from human control
         self.leader_robot_data.EE_pos.append(to_tensor(leader_state["EE_pos"]))

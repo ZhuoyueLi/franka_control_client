@@ -10,14 +10,9 @@ from digital_twin.models import RobotModelId
 from digital_twin.simulation.mirror import RobotMirror
 from simpub.core import XRTrajectory
 
-from franka_control_client.control_pair.cartesian_policy_panda_control_pair import (
-    CartesianPolicyPandaControlPair,
-)
 from ..control_pair.pil_panda_control_pair import PILMode, PILPandaControlPair
 from ..data_collection.utils import NonBlockingKeyPress
 from .policy_inference_manager import PolicyInferenceState
-
-from ..control_pair.policy_panda_control_pair import PolicyPandaControlPair
 
 from ..policy_inference.irl_wrapper import IRL_HardwareDataWrapper
 
@@ -27,6 +22,7 @@ from .lerobot_policy_inference import (
     LeRobotPolicyInference,
     LeRobotPolicyInferenceConfig,
 )
+from ..data_collection.data_collection_manager import DataCollectionState
 
 
 class MQ3TrajVisualDataCollectionInference(LeRobotPolicyInference):
@@ -45,7 +41,7 @@ class MQ3TrajVisualDataCollectionInference(LeRobotPolicyInference):
         self.last_chunk_traj: Optional[XRTrajectory] = None
         self.history_way_points = []
         self.history_traj: Optional[XRTrajectory] = None
-        self.reset_history_lock = threading.Lock()
+        self.reset_history_event = threading.Event()
         self.running = True
 
         self._data_colection: PILIRLDataCollection = PILIRLDataCollection(
@@ -55,6 +51,10 @@ class MQ3TrajVisualDataCollectionInference(LeRobotPolicyInference):
             fps=40,
             control_pair=control_pair,
         )
+        # self.data_collection_thread = threading.Thread(target=self.run_data_collection, daemon=True)
+        # self.data_collection_thread.start()
+        self.control_pair.register_history(self._data_colection)
+
 
     def _collect_step(self) -> None:
         if self.control_pair.current_state == PILMode.INTERRUPT:
@@ -64,28 +64,52 @@ class MQ3TrajVisualDataCollectionInference(LeRobotPolicyInference):
             self._data_colection._collect_step(
                 self.control_pair.get_lastest_command()
             )
+        elif self.control_pair.current_state == PILMode.REPLAY:
+            return
 
     def _visualize_step(self) -> None:
-        color = (
-            [0.0, 1.0, 0.0, 1.0]
-            if self.control_pair.current_state == PILMode.POLICY
-            else [1.0, 0.0, 0.0, 1.0]
-        )
-        lastest_action = self._data_colection.leader_robot_data
-        with self.reset_history_lock:
-            if lastest_action is not None:
-                self.history_way_points.append(
-                    {
-                        "pos": lastest_action.EE_pos[-1].tolist(),
-                        "color": color,
-                    }
-                )
-                if self.history_traj is None:
-                    self.history_traj = self.mirror._cavns.create_trajectory(
-                        name="history_traj", waypoints=self.history_way_points
+        if self.reset_history_event.is_set():
+            self.history_traj = None
+            self.history_way_points = []
+            self.reset_history_event.clear()
+            return
+        arm_state = self.arm_wrapper.arm.current_state
+        if arm_state is not None:
+            self.mirror.apply_arm_state(np.array(arm_state["q"]))
+        if self.control_pair.current_state == PILMode.POLICY:
+            color = [0.0, 0.0, 1.0, 1.0]
+        elif self.control_pair.current_state == PILMode.INTERRUPT:
+            color = [0.0, 1.0, 0.0, 1.0]
+        else:
+            self.history_way_points = []
+            with self._data_colection.data_lock:
+                leader_data = self._data_colection.leader_robot_data
+                for pos, source in zip(leader_data.EE_pos, leader_data.source):
+                    self.history_way_points.append(
+                        {
+                            "pos": pos.tolist(),
+                            "color": [0.0, 0.0, 1.0, 1.0] if float(source) > 0.5 else [0.0, 1.0, 0.0, 1.0]
+                        }
                     )
-                else:
-                    self.history_traj.update(waypoints=self.history_way_points)
+            if len(self.history_way_points) != 0:
+                self.history_traj.update(waypoints=self.history_way_points)
+            return
+        if not hasattr(self._data_colection, "leader_robot_data"):
+            return
+        lastest_action = self._data_colection.leader_robot_data
+        if lastest_action is not None and len(lastest_action.EE_pos) != 0:
+            self.history_way_points.append(
+                {
+                    "pos": lastest_action.EE_pos[-1].tolist(),
+                    "color": color,
+                }
+            )
+            if self.history_traj is None:
+                self.history_traj = self.mirror._cavns.create_trajectory(
+                    name="history_traj", waypoints=self.history_way_points
+                )
+            else:
+                self.history_traj.update(waypoints=self.history_way_points)
 
     def _infer_step(self) -> None:
         # if self.last_timestamp is None:
@@ -149,7 +173,7 @@ class MQ3TrajVisualDataCollectionInference(LeRobotPolicyInference):
             way_points.append(
                 {
                     "pos": post_action_chunk[0][idx][:3].tolist(),
-                    "color": [0.0, 1.0, 0.0, 1.0],
+                    "color": [1.0, 0.0, 0.0, 1.0],
                 }
             )
         if self.last_chunk_traj is None:
@@ -180,6 +204,7 @@ class MQ3TrajVisualDataCollectionInference(LeRobotPolicyInference):
 
     def _reset_arm(self):
         self.control_pair.clear_lastest_command()
+        self.reset_history_event.set()
         return super()._reset_arm()
 
     def run(self) -> None:
@@ -198,8 +223,8 @@ class MQ3TrajVisualDataCollectionInference(LeRobotPolicyInference):
                     ):
                         # curr_time = time.perf_counter()
                         self._infer_step()
-                        self._visualize_step()
                         self._collect_step()
+                        self._visualize_step()
                         # end_time = time.perf_counter()
                         # elapsed = end_time - curr_time
                         # print(f"Inference step took {elapsed:.3f} seconds")
@@ -224,3 +249,7 @@ class MQ3TrajVisualDataCollectionInference(LeRobotPolicyInference):
     def _save_episode(self) -> None:
         self._data_colection._save_episode()
         return super()._save_episode()
+
+    def _start_infering(self):
+        self._data_colection._start_collecting()
+        return super()._start_infering()

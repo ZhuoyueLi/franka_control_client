@@ -15,20 +15,21 @@ from franka_control_client.policy_inference.irl_wrapper import (
     IRL_HardwareDataWrapper,
     ImageDataWrapper,
     PandaArmDataWrapper,
-    RobotiqGripperDataWrapper,
+    RobotiqGripperDataWrapper
 )
+from franka_control_client.data_collection.irl_wrapper import MQ3DataWrapper
+
 from franka_control_client.policy_inference.lerobot_policy_inference import (
     LeRobotPolicyInferenceConfig,
 )
-from ..src.franka_control_client.policy_inference.mq3_traj_visual_data_collection import (
+from franka_control_client.policy_inference.mq3_traj_visual_data_collection import (
     MQ3TrajVisualDataCollectionInference,
-)
-from franka_control_client.policy_inference.mq3_traj_visual_lerobot_inference import (
-    MQ3TrajVisualLeRobotInference,
 )
 from franka_control_client.robotiq_gripper.robotiq_gripper import (
     RemoteRobotiqGripper,
 )
+from franka_control_client.vr.meta_quest3 import MQ3Controller
+from franka_control_client.control_pair.mq3_panda_control_pair import MQ3PandaControlPair
 
 
 if __name__ == "__main__":
@@ -49,14 +50,15 @@ if __name__ == "__main__":
     task = "pick_up_cylinder_on_the_top_of_cube"  # "Pick up the bell pepper and place it in the bowl."
     dataset_path = "/home/irl-admin/chekpoints/4th_March_folding"
     dataset_path = "/home/irl-admin/xinkai/lerobot_format/pick_up_cylinder_on_the_top_of_cube"
-
     follower = PandaRobotiq(
         "PandaRobotiq",
         RemotePandaArm("FrankaPanda"),
         RemoteRobotiqGripper("FrankaPanda"),
     )
+    leader = MQ3Controller("IRL-MQ3-2", "192.168.0.117", follower.panda_arm)
+    leader.mq3.wait_for_connection()
     control_pair = PILPandaControlPair(
-        follower.panda_arm, follower.robotiq_gripper, 50
+        follower.panda_arm, follower.robotiq_gripper, leader, 50
     )
 
     # Camera capture interval matches inference frequency (30 Hz = 0.033s)
@@ -77,6 +79,7 @@ if __name__ == "__main__":
     )
 
     data_collectors: List[IRL_HardwareDataWrapper] = []
+    data_collectors.append(MQ3DataWrapper(leader))
     data_collectors.append(camera_left)
     data_collectors.append(camera_right)
     data_collectors.append(camera_wrist)
@@ -86,7 +89,7 @@ if __name__ == "__main__":
     inference_cfg = LeRobotPolicyInferenceConfig(
         checkpoint_path=checkpoint_path,
         task=task,
-        fps=1,
+        fps=10,
         device="cuda",
         policy_dtype="bfloat16",
         dataset_path=dataset_path,

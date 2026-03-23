@@ -61,20 +61,18 @@ class PILPandaControlPair(CartesianPolicyPandaControlPair):
         self,
         panda_arm: RemotePandaArm,
         gripper: Union[RemotePandaGripper, RemoteRobotiqGripper],
+        mq3_controller: MQ3PandaControlPair,
         control_hz: float = DEFAULT_CONTROL_HZ,
     ) -> None:
         super().__init__(panda_arm, gripper, control_hz)
         self.policy_pair = self
         self.panda_arm = panda_arm
         self.gripper = gripper
-        self.mq3_controller = MQ3Controller(
-            "IRL-MQ3-2", "192.168.0.117", panda_arm
-        )
+        self.mq3_controller = mq3_controller
 
         self.interrupt_control_pair = MQ3PandaControlPair(
             self.mq3_controller, PandaRobotiq("MQ3Panda", panda_arm, gripper)
         )
-
         self.current_control_pair: ControlPair = self.policy_pair
         self.current_state = PILMode.POLICY
         self.control_pair_lock = threading.Lock()
@@ -96,14 +94,14 @@ class PILPandaControlPair(CartesianPolicyPandaControlPair):
         with self.control_pair_lock:
             self.current_control_pair = self.policy_pair
         self.reset_action()  # Clear any residual commands when switching back to policy control
-        print("Switched to policy control")
+        # print("Switched to policy control")
 
     def switch_to_interrupt_control(self) -> None:
         self.current_state = PILMode.INTERRUPT
         with self.control_pair_lock:
             self.current_control_pair = self.interrupt_control_pair
         self.reset_action()  # Clear any residual commands when switching to interrupt control
-        print("Switched to interrupt control")
+        # print("Switched to interrupt control")
 
     def _control_task(self) -> None:
         try:
@@ -142,17 +140,23 @@ class PILPandaControlPair(CartesianPolicyPandaControlPair):
             data = (
                 self.mq3_controller.mq3.get_controller_data()
             )  # Ensure we have the latest data from MQ3, even if not used in policy control
-            if data is None or not data["X"] or self.data_manager is None:
+            if data is None or not data["A"] or self.data_manager is None:
+                self.data_manager.set_pause(False)
                 break
+            self.data_manager.set_pause(True)
             self.current_state = PILMode.REPLAY
-            pos, quat, gripper_width = (
-                self.data_manager.pop()
-            )  # Pop the oldest data point to maintain sync with control steps
+            result = self.data_manager.pop()
+            # Pop the oldest data point to maintain sync with control steps
+            if result is None:
+                continue
+            pos, quat, gripper_width = result
             self.panda_arm.send_cartesian_pose_command(pos=pos, rot=quat)
             self.gripper.send_grasp_command(
-                position=gripper_width,
+                position=float(gripper_width),
                 speed=GRIPPER_SPEED,
                 force=GRIPPER_FORCE,
                 blocking=False,
             )
+            self.reset_action()
+            pyzlc.sleep(0.1)
         self.current_state = previous_state

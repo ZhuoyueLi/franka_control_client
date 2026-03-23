@@ -11,7 +11,7 @@ from simpub.core import XRTrajectory
 
 from franka_control_client.control_pair.cartesian_policy_panda_control_pair import CartesianPolicyPandaControlPair
 
-from ..control_pair.policy_panda_control_pair import PolicyPandaControlPair
+from ..control_pair.pil_panda_control_pair import PILPandaControlPair
 
 from ..policy_inference.irl_wrapper import IRL_HardwareDataWrapper
 
@@ -25,7 +25,7 @@ class MQ3TrajVisualLeRobotInference(LeRobotPolicyInference):
     def __init__(
         self,
         data_collectors: List[IRL_HardwareDataWrapper],
-        control_pair: CartesianPolicyPandaControlPair,
+        control_pair: PILPandaControlPair,
         cfg: LeRobotPolicyInferenceConfig,
     ) -> None:
         super().__init__(data_collectors, control_pair, cfg)
@@ -71,11 +71,11 @@ class MQ3TrajVisualLeRobotInference(LeRobotPolicyInference):
                         self.history_traj.update(waypoints=self.history_way_points)
             # elif hasattr(self.control_pair.current_control_pair, "leader"):
             else:
-                print("Using leader control signal for visualization")
+                # print("Using leader control signal for visualization")
                 control_signal = self.control_pair.current_control_pair.leader.current_control_signal
                 if control_signal is None:
                     continue
-                print(f"Current control signal: {control_signal}")
+                # print(f"Current control signal: {control_signal}")
                 self.history_way_points.append(
                     {
                         "pos": control_signal["pos"],
