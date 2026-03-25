@@ -150,13 +150,15 @@ class LeaderData:
 
     def save(self, path: Path):
 
+        print(self.source)
+        print(type(self.source))
         tensor_lists = [
             # torch.tensor(self.timestamp_ms_list, dtype=torch.int64),
             # torch.stack(self.O_T_EE_list),
             # torch.stack(self.O_T_EE_d_list),
             torch.stack(self.EE_pos),
             torch.stack(self.EE_quat),
-            torch.stack(self.source),
+            torch.FloatTensor(self.source),
             # torch.stack(self.q_list),
             # torch.stack(self.q_d_list),
             # torch.stack(self.dq_list),
@@ -309,7 +311,7 @@ class PILIRLDataCollection(DataCollectionManager):
             leader_state["EE_pos"] = policy_control_signal[:3]
             leader_state["EE_quat"] = policy_control_signal[3:7]
             # leader_state["gello_arm_state"]["joint_state"] = policy_control_signal.get("joint_state", leader_state["gello_arm_state"]["joint_state"])
-            leader_state["gripper_width"] = policy_control_signal[-1] * 0.08
+            leader_state["gripper_width"] = policy_control_signal[-1] # * 0.08
             self.leader_robot_data.source.append(
                 0.0
             )  # Mark this data point as coming from policy control

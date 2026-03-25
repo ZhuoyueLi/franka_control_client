@@ -72,7 +72,7 @@ class CartesianPolicyPandaControlPair(ControlPair):
     def get_lastest_command(self) -> Optional[np.ndarray]:
         with self._command_lock:
             if self._lastest_command is not None:
-                return self._lastest_command.copy()
+                return np.append(self._lastest_command.copy(), self._last_gripper_cmd)
             return None
 
     def clear_lastest_command(self) -> None:
@@ -323,6 +323,7 @@ class CartesianPolicyPandaControlPair(ControlPair):
         # Gripper command
         gripper_cmd = float(action[-1])
         gripper_cmd = 1 if gripper_cmd >= 0.5 else 0
+        action[-1] = gripper_cmd
 
         if isinstance(self.gripper, RemoteRobotiqGripper):
             if (

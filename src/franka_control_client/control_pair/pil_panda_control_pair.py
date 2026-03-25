@@ -93,14 +93,14 @@ class PILPandaControlPair(CartesianPolicyPandaControlPair):
         self.current_state = PILMode.POLICY
         with self.control_pair_lock:
             self.current_control_pair = self.policy_pair
-        self.reset_action()  # Clear any residual commands when switching back to policy control
+        self.clear_lastest_command()  # Clear any residual commands when switching back to policy control
         # print("Switched to policy control")
 
     def switch_to_interrupt_control(self) -> None:
         self.current_state = PILMode.INTERRUPT
         with self.control_pair_lock:
             self.current_control_pair = self.interrupt_control_pair
-        self.reset_action()  # Clear any residual commands when switching to interrupt control
+        self.clear_lastest_command()  # Clear any residual commands when switching to interrupt control
         # print("Switched to interrupt control")
 
     def _control_task(self) -> None:
