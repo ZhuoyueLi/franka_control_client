@@ -3,12 +3,17 @@ from __future__ import annotations
 import threading
 import time
 import traceback
+from pathlib import Path
 from typing import Optional, Union
 
+import matplotlib
 import numpy as np
 import torch
 import pyzlc
 from collections import deque
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 from .control_pair import ControlPair
 from ..franka_robot.panda_arm import ControlMode, RemotePandaArm
@@ -16,7 +21,7 @@ from ..franka_robot.panda_gripper import RemotePandaGripper
 from ..robotiq_gripper.robotiq_gripper import RemoteRobotiqGripper
 
 
-DEFAULT_CONTROL_HZ: float = 100
+DEFAULT_CONTROL_HZ: float = 50
 GRIPPER_DEADBAND: float = 1e-3
 GRIPPER_SPEED = 0.7
 GRIPPER_FORCE = 0.3
@@ -38,7 +43,7 @@ VELOCITY_LIMITS = np.array(
     ],
     dtype=np.float32,
 )
-VELOCITY_LIMIT_SCALE = 0.5
+VELOCITY_LIMIT_SCALE = 0.3
 VELOCITY_LIMITS_MAX = VELOCITY_LIMITS[1] * VELOCITY_LIMIT_SCALE
 
 class PolicyPandaControlPair(ControlPair):
@@ -73,6 +78,12 @@ class PolicyPandaControlPair(ControlPair):
         self._last_joint_pos: Optional[np.ndarray] = None
         self._last_control_time: Optional[float] = None
         self._dt = 1.0 / self.control_hz  # time delta between control steps
+        self._plot_dir = Path("debug/control_pair_joint_plots")
+        self._action_chunk_joint_history: list[np.ndarray] = []
+        self._expanded_action_chunk_joint_history: list[np.ndarray] = []
+        self._sent_waypoint_joint_history: list[np.ndarray] = []
+        self._plot_current_pos_joint_history: list[np.ndarray] = []
+        self._received_chunk_count: int = 0
 
     def _get_current_joint_pos(self) -> Optional[np.ndarray]:
         current_state = self.panda_arm.current_state
@@ -117,6 +128,10 @@ class PolicyPandaControlPair(ControlPair):
         with self._action_lock:
             self._latest_action = action_queue[-1].copy()
             self._latest_action_chunk = action_queue
+        self._action_chunk_joint_history.extend(
+            np.asarray(action[:7], dtype=np.float32).copy() for action in chunk[0]
+        )
+        self._received_chunk_count += 1
 
     
     def _get_latest_action(self) -> Optional[np.ndarray]:
@@ -148,12 +163,72 @@ class PolicyPandaControlPair(ControlPair):
         with self._action_lock:
             self._latest_action = None
             self._latest_action_chunk.clear()
+        self._action_chunk_joint_history = []
+        self._expanded_action_chunk_joint_history = []
+        self._sent_waypoint_joint_history = []
+        self._plot_current_pos_joint_history = []
+        self._received_chunk_count = 0
         self._last_gripper_cmd = None
         self._last_gripper_binary = None
         self._gripper_toggle_count = 0
         self._gripper_toggle_window_start_ts = time.time()
         self._last_joint_pos = self._get_current_joint_pos()
         pyzlc.info("Action state reset for new episode")
+
+    def _save_joint_comparison_plots(self) -> None:
+        """Save one plot per joint comparing target chunk values and sent waypoints."""
+        if not self._action_chunk_joint_history:
+            pyzlc.info("Skipping joint plots: no action chunk history recorded.")
+            return
+        if not self._sent_waypoint_joint_history:
+            pyzlc.info("Skipping joint plots: no waypoint commands were sent.")
+            return
+
+        action_chunk = np.asarray(self._expanded_action_chunk_joint_history, dtype=np.float32)
+        sent_waypoints = np.asarray(self._sent_waypoint_joint_history, dtype=np.float32)
+        current_pos = np.asarray(self._plot_current_pos_joint_history, dtype=np.float32)
+        self._plot_dir.mkdir(parents=True, exist_ok=True)
+
+        for joint_idx in range(7):
+            fig, ax = plt.subplots(figsize=(12, 5))
+            ax.plot(
+                np.arange(action_chunk.shape[0]),
+                action_chunk[:, joint_idx],
+                label="action_chunk_expanded",
+                linewidth=2,
+            )
+            ax.plot(
+                np.arange(sent_waypoints.shape[0]),
+                sent_waypoints[:, joint_idx],
+                label="sent_waypoint",
+                linewidth=1.5,
+            )
+            if len(current_pos) > 0:
+                ax.plot(
+                    np.arange(current_pos.shape[0]),
+                    current_pos[:, joint_idx],
+                    label="plot_current_pos",
+                    linewidth=1.2,
+                )
+            ax.set_title(f"Joint {joint_idx} Action Chunk vs Sent Waypoints")
+            ax.set_xlabel("Step")
+            ax.set_ylabel("Joint Position")
+            ax.grid(True, alpha=0.3)
+            ax.legend(loc="best")
+            fig.tight_layout()
+            save_path = self._plot_dir / f"joint_{joint_idx}.png"
+            fig.savefig(save_path)
+            plt.close(fig)
+
+        pyzlc.info(
+            "Saved joint comparison plots to "
+            f"{self._plot_dir.resolve()} "
+            f"(received_chunks={self._received_chunk_count}, "
+            f"raw_action_points={len(self._action_chunk_joint_history)}, "
+            f"expanded_action_points={len(self._expanded_action_chunk_joint_history)}, "
+            f"sent_waypoints={len(self._sent_waypoint_joint_history)}, "
+            f"plot_current_pos={len(self._plot_current_pos_joint_history)})"
+        )
 
     def _generate_waypoints_within_limits(
         self,
@@ -236,24 +311,35 @@ class PolicyPandaControlPair(ControlPair):
             self._last_joint_pos = current_joint_pos
 
         max_joint_vel = VELOCITY_LIMITS_MAX * max_vel_norm_factor
-        # print("debug:last_joint",self._last_joint_pos)
-        # print("debug:goal_joint",goal_joint_pos)
+        print("debug:last_joint",self._last_joint_pos)
+        print("debug:goal_joint",goal_joint_pos)
         waypoints, _ = self._generate_waypoints_within_limits(
             self._last_joint_pos, goal_joint_pos, self.control_hz, max_joint_vel
         )
-        # print(
-            # f"debug:Generated {len(waypoints)} waypoints with max joint velocity "
-            # f"{max_joint_vel} rad/s"s
-        # )
+        print(
+            f"debug:Generated {len(waypoints)} waypoints with max joint velocity "
+            f"{max_joint_vel} rad/s"
+        )
+        expanded_goal = goal_joint_pos.copy()
         #too jerky to actuate the entire waypoint sequence in one control step, so we send one waypoint at a time in each control step. The next waypoint will be generated in the next control step based on the latest joint position, which ensures smoother motion and better adherence to velocity limits.
-        for i in range(min(3, len(waypoints))):
+        for i in range(min(20, len(waypoints))):
+            plot_current_pos = self._get_current_joint_pos()
             joint_cmd = (waypoints[i].numpy())
             self.panda_arm.send_joint_position_command(joint_cmd)
-            #???
-            self._last_joint_pos = np.asarray(joint_cmd, dtype=np.float32)
 
+            self._last_joint_pos = np.asarray(joint_cmd, dtype=np.float32)
+            self._expanded_action_chunk_joint_history.append(expanded_goal.copy())
+            self._sent_waypoint_joint_history.append(self._last_joint_pos.copy())
+            if plot_current_pos is None:
+                self._plot_current_pos_joint_history.append(
+                    np.full(7, np.nan, dtype=np.float32)
+                )
+            else:
+                self._plot_current_pos_joint_history.append(
+                    np.asarray(plot_current_pos, dtype=np.float32).copy()
+                )
             #need to refine
-            pyzlc.sleep(1.0 / 1000)
+            pyzlc.sleep(1.0 / self.control_hz)
         # self._last_joint_pos = self._get_current_joint_pos()
         ###
         ##only execute action once
@@ -367,6 +453,7 @@ class PolicyPandaControlPair(ControlPair):
             self._gripper_toggle_count = 0
 
     def control_end(self) -> None:
+        self._save_joint_comparison_plots()
         self.panda_arm.set_franka_arm_control_mode(ControlMode.IDLE)
 
     def _control_task(self) -> None:

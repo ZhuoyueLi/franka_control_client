@@ -248,7 +248,7 @@ class IRLDataCollection(DataCollectionManager):
         self.follower_robot_data.dq_list.append(to_tensor(follower_arm_state["dq"]))
         self.follower_robot_data.tau_ext_hat_filtered_list.append(to_tensor(follower_arm_state["tau_ext_hat_filtered"]))
         self.follower_robot_data.O_F_ext_hat_K_list.append(to_tensor(follower_arm_state["O_F_ext_hat_K"]))
-                #follower gripper
+        #follower gripper
         self.follower_robot_data.gripper_state_list.append(to_tensor(follower_gripper_state["position"]))
         self.follower_robot_data.gripper_current_list.append(to_tensor(follower_gripper_state["current"]))
         #cameras
@@ -260,7 +260,7 @@ class IRLDataCollection(DataCollectionManager):
         if self._last_robot_time is None:
             self._last_robot_time = start_time
         elapsed = time.perf_counter() - start_time
-        sleep_time = max(0.0, (1.0 / self.fps) - elapsed)-0.0015 #adjust a little
+        sleep_time = max(0.0, (1.0 / self.fps) - elapsed)-0.0005 #adjust a little
         if sleep_time > 0.0:
             time.sleep(sleep_time)
         self._last_robot_time = time.perf_counter()
@@ -382,9 +382,10 @@ class IRLDataCollection(DataCollectionManager):
             # Check if it's time to capture for this camera based on its capture_interval
             # begin_time = time.time()
             # print("debug:capture begin time", begin_time,stream.hw_name)
+
             #### To open the different frequency of cams
-            # if stream.capture_interval > 0 and (cur_time - self.camera_last_capture_times[idx]) < (stream.capture_interval-0.0027):
-            #     continue
+            if stream.capture_interval > 0 and (cur_time - self.camera_last_capture_times[idx]) < (stream.capture_interval-0.0043):
+                continue
             # print("debug:get camera")
             camera_dir = self.camera_dirs[idx]
             frame = stream.capture_step()

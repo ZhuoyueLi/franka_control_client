@@ -14,7 +14,7 @@ from franka_control_client.policy_inference.irl_wrapper import (
     PandaArmDataWrapper,
     RobotiqGripperDataWrapper,
 )
-from franka_control_client.policy_inference.lerobot_policy_inference import (
+from franka_control_client.policy_inference.lerobot_policy_inference_dummy import (
     LeRobotPolicyInference,
     LeRobotPolicyInferenceConfig,
 )
@@ -35,6 +35,7 @@ if __name__ == "__main__":
     checkpoint_path = "/home/irl-admin/chekpoints/4th_March_folding/pretrained_model"
     task = "fold the scarf on the table." #"Pick up the bell pepper and place it in the bowl."
     dataset_path = "/home/irl-admin/chekpoints/4th_March_folding"
+    action_data_path = "/home/irl-admin/new_data_collection/test_proprio_40hz_cam_40hz/2026_03_26-16_58_01/Gello"
 
     follower = PandaRobotiq(
         "PandaRobotiq",
@@ -68,6 +69,7 @@ if __name__ == "__main__":
         device="cuda",
         policy_dtype="bfloat16",
         dataset_path=dataset_path,
+        action_data_path=action_data_path,
     )
     inference_manager = LeRobotPolicyInference(
         data_collectors=data_collectors,
