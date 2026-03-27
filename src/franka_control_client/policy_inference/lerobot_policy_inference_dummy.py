@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 import cv2
+import matplotlib
 import numpy as np
 import pyzlc
 import torch
@@ -13,6 +14,9 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import FeatureType, PolicyFeature
 from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.utils.utils import get_safe_torch_device
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 from .policy_inference_manager import PolicyInferenceManager
 from .irl_wrapper import (
@@ -39,6 +43,7 @@ class LeRobotPolicyInferenceConfig:
     device: str = "cuda"
     policy_dtype: Optional[str] = None
     dataset_path: Optional[str] = None
+    action_data_path: Optional[str] = None
 
 
 class LeRobotPolicyInference(PolicyInferenceManager):
@@ -90,6 +95,9 @@ class LeRobotPolicyInference(PolicyInferenceManager):
         self.register_start_infering_event(self.control_pair.start_control_pair)
         self.register_stop_infering_event(self.control_pair.stop_control_pair)
         self._debug_image_dir = Path("debug/inference_start_images")
+        self._debug_action_dir = Path("debug/action_chunk")
+        self._loaded_action_chunk = self._load_action_chunk_from_pt_files()
+        self._dummy_action_sent = False
 
     def _load_train_cfg(self) -> TrainPipelineConfig:
         """Load training config from checkpoint."""
@@ -229,6 +237,115 @@ class LeRobotPolicyInference(PolicyInferenceManager):
         """Match real_robot_sim image tensor construction."""
         rgb = torch.from_numpy(image.copy()).float().permute(2, 0, 1) / 255.0
         return rgb.unsqueeze(0).unsqueeze(0)
+
+    def _resolve_pt_path(self, *candidate_names: str) -> Path:
+        """Resolve a .pt file from the configured action-data directory."""
+        search_root = (
+            Path(self.cfg.action_data_path).expanduser()
+            if self.cfg.action_data_path
+            else Path.cwd()
+        )
+        for candidate in candidate_names:
+            path = search_root / candidate
+            if path.exists():
+                return path
+        raise FileNotFoundError(
+            f"Could not find any of these files in {search_root}: {candidate_names}"
+        )
+
+    def _pt_to_numpy(self, value: Any, name: str) -> np.ndarray:
+        """Convert torch-saved content to a float32 numpy array."""
+        if isinstance(value, torch.Tensor):
+            array = value.detach().cpu().numpy()
+        else:
+            array = np.asarray(value)
+        if array.size == 0:
+            raise ValueError(f"{name} is empty.")
+        return np.asarray(array, dtype=np.float32)
+
+    def _save_joint_plot(self, joint_pos: np.ndarray, save_path: Path) -> None:
+        """Save one plot with all 7 joint trajectories."""
+        fig, ax = plt.subplots(figsize=(12, 6))
+        for joint_idx in range(joint_pos.shape[1]):
+            ax.plot(joint_pos[:, joint_idx], label=f"joint_{joint_idx}")
+        ax.set_title("Joint Position Trajectories")
+        ax.set_xlabel("Timestep")
+        ax.set_ylabel("Joint Position")
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="best", ncol=2)
+        fig.tight_layout()
+        fig.savefig(save_path)
+        plt.close(fig)
+
+    def _save_gripper_plot(self, gripper_command: np.ndarray, save_path: Path) -> None:
+        """Save one plot with the gripper command trajectory."""
+        fig, ax = plt.subplots(figsize=(12, 4))
+        ax.plot(gripper_command, color="tab:red")
+        ax.set_title("Gripper Command Trajectory")
+        ax.set_xlabel("Timestep")
+        ax.set_ylabel("Gripper Command")
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(save_path)
+        plt.close(fig)
+
+    def _load_action_chunk_from_pt_files(self) -> torch.Tensor:
+        """Load prerecorded joint and gripper actions and format them as (B, T, 8)."""
+        joint_pos_path = self._resolve_pt_path("joint_pos.pt")
+        gripper_command_path = self._resolve_pt_path(
+            "gripper_command.pt",
+            # "gripper command.pt",
+        )
+
+        joint_pos = self._pt_to_numpy(torch.load(joint_pos_path, map_location="cpu"), "joint_pos")
+        gripper_command = self._pt_to_numpy(
+            torch.load(gripper_command_path, map_location="cpu"),
+            "gripper_command",
+        )
+
+        if joint_pos.ndim == 1:
+            if joint_pos.size % 7 != 0:
+                raise ValueError(
+                    f"joint_pos must contain a multiple of 7 values, got shape {joint_pos.shape}"
+                )
+            joint_pos = joint_pos.reshape(-1, 7)
+        elif joint_pos.ndim > 2:
+            joint_pos = joint_pos.reshape(joint_pos.shape[0], -1)
+
+        if joint_pos.shape[1] != 7:
+            raise ValueError(f"joint_pos must have 7 joints per action, got shape {joint_pos.shape}")
+
+        gripper_command = gripper_command.reshape(-1)
+
+        joint_len = int(joint_pos.shape[0])
+        gripper_len = int(gripper_command.shape[0])
+        pyzlc.info(f"joint_pos length: {joint_len}")
+        pyzlc.info(f"gripper_command length: {gripper_len}")
+        print(f"joint_pos length: {joint_len}")
+        print(f"gripper_command length: {gripper_len}")
+
+        if joint_len != gripper_len:
+            aligned_len = min(joint_len, gripper_len)
+            pyzlc.error(
+                "joint_pos and gripper_command lengths do not match. "
+                f"Truncating to {aligned_len} steps."
+            )
+            joint_pos = joint_pos[:aligned_len]
+            gripper_command = gripper_command[:aligned_len]
+
+        self._debug_action_dir.mkdir(parents=True, exist_ok=True)
+        self._save_joint_plot(joint_pos, self._debug_action_dir / "joint_pos.png")
+        self._save_gripper_plot(
+            gripper_command, self._debug_action_dir / "gripper_command.png"
+        )
+
+        action_chunk = np.concatenate(
+            [joint_pos, gripper_command[:, None]],
+            axis=1,
+        )
+        pyzlc.info(f"Combined action_chunk shape: {action_chunk.shape}")
+
+        return torch.from_numpy(action_chunk).unsqueeze(0)
 
     def _build_observation(self) -> Dict[str, Any]:
         """Build observation dict from hardware data."""
@@ -381,46 +498,22 @@ class LeRobotPolicyInference(PolicyInferenceManager):
     def _start_infering(self) -> None:
         # Reset action state for new episode
         self.control_pair.reset_action()
+        self._dummy_action_sent = False
         #debug
         # self._check_startup_image()
         # self.last_timestamp = None
         super()._start_infering()
 
     def _infer_step(self) -> None:
+        if self._dummy_action_sent:
+            time.sleep(max(0.001, 1.0 / self.fps))
+            return
+
         # if self.last_timestamp is None:
         #     self.last_timestamp = time.perf_counter()
         start_time = time.perf_counter()
-        # Build observation from hardware
-        observation = self._build_observation()
-        
-        try:
-            # Preprocess observation
-            observation = self.preprocessor(observation)
-        except Exception as exc:
-            image_shapes = {
-                k: tuple(v.shape)
-                for k, v in observation.items()
-                if str(k).startswith("observation.images.") and hasattr(v, "shape")
-            }
-            raise RuntimeError(
-                f"Preprocessor failed. image_shapes={image_shapes}, state_shape={tuple(observation['observation.state'].shape)}"
-            ) from exc
-        
-        # Evaluate policy and postprocess each action in the predicted chunk.
-        with torch.inference_mode():
-        ###single action
-        #       action = self.policy.select_action(observation)
-        # action = action[:, :8]
-        
-        # # Postprocess action
-        # action = self.postprocessor(action).float().cpu().numpy()
-        # # print("post action:",action)
-        
-        # action_vec = action[0] if action.ndim == 2 else action
 
-        ###action chunk
-            action_chunk = self.policy.predict_action_chunk(observation)
-
+        action_chunk = self._loaded_action_chunk
         if action_chunk.ndim == 2:
             action_chunk = action_chunk.unsqueeze(1)
         elif action_chunk.ndim != 3:
@@ -428,24 +521,13 @@ class LeRobotPolicyInference(PolicyInferenceManager):
                 f"Expected action_chunk to have shape (B, T, D) or (B, D), got {tuple(action_chunk.shape)}"
             )
 
-        batch_size, chunk_size, action_dim = action_chunk.shape
-        action_dim_expected = 8  # 7 joints + 1 gripper
-        post_action_chunk = torch.zeros((batch_size, chunk_size, action_dim_expected), dtype=torch.float32)
-        for chunk_idx in range(chunk_size):
-            single_action = action_chunk[:, chunk_idx, :]
-            single_action = single_action[:, :8]
-            processed_action = self.postprocessor(single_action)
-            # pyzlc.info(f"Processed action chunk {chunk_idx}: {processed_action.float().cpu().numpy()}")
-            post_action_chunk[:, chunk_idx, :] = processed_action
-
-        post_action_chunk = post_action_chunk.float().cpu().numpy()
-        # for idx in range(len(post_action_chunk)):
-        #     pyzlc.info(f"Postprocessed action chunk for batch {idx}: {post_action_chunk[idx]}")
+        post_action_chunk = action_chunk.float().cpu().numpy()
         try:
-            #single_action
-            # self.control_pair.update_action(action_vec)
-            #action chunk
             self.control_pair.update_action_chunk(post_action_chunk)
+            self._dummy_action_sent = True
+            pyzlc.info(
+                f"Sent dummy action chunk once with shape {post_action_chunk.shape}"
+            )
         except Exception as exc:
             pyzlc.error(f"Failed to apply policy action: {exc}")
         end_time = time.perf_counter()
