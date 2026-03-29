@@ -127,6 +127,8 @@ class PolicyPandaControlPair(ControlPair):
         self._action_chunk_joint_history.extend(
             np.asarray(action[:7], dtype=np.float32).copy() for action in chunk[0]
         )
+        # Mark chunk arrival at the latest waypoint index available at receive time.
+        self._chunk_end_plot_indices.append(max(len(self._sent_waypoint_joint_history) - 1, 0))
         self._received_chunk_count += 1
 
     def _copy_action_queue(
@@ -192,16 +194,10 @@ class PolicyPandaControlPair(ControlPair):
                 self._current_action_chunk, overlap = self._blend_action_chunks(
                     self._current_action_chunk, self._latest_action_chunk
                 )
-                if overlap > 0:
-                    self._chunk_end_action_indices.add(
-                        self._executed_action_count + overlap
-                    )
                 self._current_action_chunk_version = self._latest_action_chunk_version
 
             if self._current_action_chunk:
                 action = self._current_action_chunk.popleft()
-                if not self._current_action_chunk:
-                    self._chunk_end_action_indices.add(self._executed_action_count + 1)
                 if self._current_action_chunk:
                     self._latest_action = self._current_action_chunk[-1].copy()
                 else:
@@ -301,6 +297,7 @@ class PolicyPandaControlPair(ControlPair):
             f"{self._plot_dir.resolve()} "
             f"(received_chunks={self._received_chunk_count}, "
             f"raw_action_points={len(self._action_chunk_joint_history)}, "
+            f"executed_actions={self._executed_action_count}, "
             f"expanded_action_points={len(self._expanded_action_chunk_joint_history)}, "
             f"sent_waypoints={len(self._sent_waypoint_joint_history)}, "
             f"chunk_end_markers={len(self._chunk_end_plot_indices)}, "
@@ -466,12 +463,6 @@ class PolicyPandaControlPair(ControlPair):
         # print(f"Received action: joint_pos={joint_pos}, gripper_cmd={action[7]:.3f}")
         joint_pos = self._send_waypoint_command(joint_pos)
         self._executed_action_count += 1
-        if self._executed_action_count in self._chunk_end_action_indices:
-            if self._sent_waypoint_joint_history:
-                self._chunk_end_plot_indices.append(
-                    len(self._sent_waypoint_joint_history) - 1
-                )
-            self._chunk_end_action_indices.discard(self._executed_action_count)
         
         # Gripper command
         gripper_cmd = float(action[7])
