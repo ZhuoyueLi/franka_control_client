@@ -3,7 +3,8 @@ from typing import List
 import pyzlc
 
 from franka_control_client.camera.camera import CameraDevice
-from franka_control_client.control_pair.policy_panda_control_pair import (
+#change control_pair here
+from franka_control_client.control_pair.policy_panda_control_pair_chunk import (
     PolicyPandaControlPair,
 )
 from franka_control_client.franka_robot.panda_arm import RemotePandaArm
@@ -64,7 +65,7 @@ if __name__ == "__main__":
     inference_cfg = LeRobotPolicyInferenceConfig(
         checkpoint_path=checkpoint_path,
         task=task,
-        fps=1,
+        fps=7,
         device="cuda",
         policy_dtype="bfloat16",
         dataset_path=dataset_path,

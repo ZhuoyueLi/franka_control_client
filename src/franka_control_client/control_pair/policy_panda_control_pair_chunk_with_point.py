@@ -21,11 +21,10 @@ from ..franka_robot.panda_gripper import RemotePandaGripper
 from ..robotiq_gripper.robotiq_gripper import RemoteRobotiqGripper
 
 
-DEFAULT_CONTROL_HZ: float = 100
+DEFAULT_CONTROL_HZ: float = 50
 GRIPPER_DEADBAND: float = 1e-3
 GRIPPER_SPEED = 0.7
 GRIPPER_FORCE = 0.3
-ACTION_LOG_INTERVAL_S: float = 0.5
 GRIPPER_TOGGLE_WARN_WINDOW_S: float = 3.0
 GRIPPER_TOGGLE_WARN_COUNT: int = 6
 DEFAULT_POSITION = (0.0, 0.0, 0.0, -2.15, 0.0, 2.15, 0.0)
@@ -43,7 +42,7 @@ VELOCITY_LIMITS = np.array(
     ],
     dtype=np.float32,
 )
-VELOCITY_LIMIT_SCALE = 0.3
+VELOCITY_LIMIT_SCALE = 0.5
 VELOCITY_LIMITS_MAX = VELOCITY_LIMITS[1] * VELOCITY_LIMIT_SCALE
 
 class PolicyPandaControlPair(ControlPair):
@@ -68,8 +67,10 @@ class PolicyPandaControlPair(ControlPair):
         self._action_lock = threading.Lock() #only one of the update_action and control_step visit latest_action at the same time 
         self._latest_action: Optional[np.ndarray] = None
         self._latest_action_chunk: deque[np.ndarray] = deque()
+        self._current_action_chunk: deque[np.ndarray] = deque()
+        self._latest_action_chunk_version: int = 0
+        self._current_action_chunk_version: int = 0
         self._last_gripper_cmd: Optional[float] = None
-        self._last_action_log_ts: float = 0.0
         self._last_gripper_binary: Optional[int] = None
         self._gripper_toggle_window_start_ts: float = time.time()
         self._gripper_toggle_count: int = 0
@@ -99,15 +100,6 @@ class PolicyPandaControlPair(ControlPair):
             )
             return None
         return joint_pos
-        
-    #using by policy side to update the latest action, and control loop will read the latest action and execute it
-    def update_action(self, action: np.ndarray) -> None:
-        """Update the latest action used by the control loop."""
-        arr = np.asarray(action, dtype=np.float64).reshape(-1)
-        if arr.size < 8:
-            raise ValueError(f"Expected action size >= 8, got {arr.size}")
-        with self._action_lock:
-            self._latest_action = arr
 
     #using by policy side to update the latest action_chunk, and control loop will read the latest action and execute it
     def update_action_chunk(self, action_chunk: np.ndarray) -> None:
@@ -131,27 +123,89 @@ class PolicyPandaControlPair(ControlPair):
         with self._action_lock:
             self._latest_action = action_queue[-1].copy()
             self._latest_action_chunk = action_queue
+            self._latest_action_chunk_version += 1
         self._action_chunk_joint_history.extend(
             np.asarray(action[:7], dtype=np.float32).copy() for action in chunk[0]
         )
         self._received_chunk_count += 1
 
-    
-    def _get_latest_action(self) -> Optional[np.ndarray]:
+    def _copy_action_queue(
+        self, action_queue: deque[np.ndarray]
+    ) -> deque[np.ndarray]:
+        return deque(np.array(action, copy=True) for action in action_queue)
+
+    def _blend_action(
+        self, current_action: np.ndarray, new_action: np.ndarray, alpha: float
+    ) -> np.ndarray:
+        blended = ((1.0 - alpha) * current_action) + (alpha * new_action)
+        if blended.size > 7:
+            blended[7] = current_action[7] if alpha < 0.5 else new_action[7]
+        return blended
+
+    def _blend_action_chunks(
+        self,
+        current_chunk: deque[np.ndarray],
+        latest_chunk: deque[np.ndarray],
+    ) -> tuple[deque[np.ndarray], int]:
+        current_actions = [np.array(action, copy=True) for action in current_chunk]
+        latest_actions = [np.array(action, copy=True) for action in latest_chunk]
+        if not current_actions:
+            return deque(latest_actions), 0
+        if not latest_actions:
+            return deque(current_actions), 0
+
+        overlap = min(len(current_actions), len(latest_actions))
+        blended_actions: list[np.ndarray] = []
+        for idx in range(overlap):
+            alpha = float(idx + 1) / float(overlap)
+            blended_actions.append(
+                self._blend_action(current_actions[idx], latest_actions[idx], alpha)
+            )
+
+        if len(latest_actions) > overlap:
+            blended_actions.extend(latest_actions[overlap:])
+        elif len(current_actions) > overlap:
+            blended_actions.extend(current_actions[overlap:])
+
+        pyzlc.info(
+            "Blended action chunks "
+            f"(remaining_current={len(current_actions)}, "
+            f"latest={len(latest_actions)}, overlap={overlap})"
+        )
+        return deque(blended_actions), overlap
+
+    def _promote_latest_chunk_locked(self) -> None:
+        if not self._latest_action_chunk:
+            return
+        self._current_action_chunk = self._copy_action_queue(self._latest_action_chunk)
+        self._current_action_chunk_version = self._latest_action_chunk_version
+        self._latest_action = self._current_action_chunk[-1].copy()
+
+    def _get_latest_action_from_chunk(self) -> Optional[np.ndarray]:
         with self._action_lock:
-            if self._latest_action is None:
-                return None
-            return self._latest_action.copy()
-        
-    def  _get_latest_action_from_chunk(self) -> Optional[np.ndarray]:
-        with self._action_lock:
-            if self._latest_action_chunk:
-                action = self._latest_action_chunk.popleft()
-                if self._latest_action_chunk:
-                    self._latest_action = self._latest_action_chunk[-1].copy()
+            if not self._current_action_chunk:
+                self._promote_latest_chunk_locked()
+            elif (
+                self._latest_action_chunk
+                and self._latest_action_chunk_version > self._current_action_chunk_version
+            ):
+                self._current_action_chunk, overlap = self._blend_action_chunks(
+                    self._current_action_chunk, self._latest_action_chunk
+                )
+                if overlap > 0:
+                    self._chunk_end_action_indices.add(
+                        self._executed_action_count + overlap
+                    )
+                self._current_action_chunk_version = self._latest_action_chunk_version
+
+            if self._current_action_chunk:
+                action = self._current_action_chunk.popleft()
+                if not self._current_action_chunk:
+                    self._chunk_end_action_indices.add(self._executed_action_count + 1)
+                if self._current_action_chunk:
+                    self._latest_action = self._current_action_chunk[-1].copy()
                 else:
                     self._latest_action = action.copy()
-                    self._chunk_end_action_indices.add(self._executed_action_count + 1)
                 return action.copy()
 
             if self._latest_action is None:
@@ -163,6 +217,9 @@ class PolicyPandaControlPair(ControlPair):
         with self._action_lock:
             self._latest_action = None
             self._latest_action_chunk.clear()
+            self._current_action_chunk.clear()
+            self._latest_action_chunk_version = 0
+            self._current_action_chunk_version = 0
         self._action_chunk_joint_history = []
         self._expanded_action_chunk_joint_history = []
         self._sent_waypoint_joint_history = []
@@ -331,15 +388,15 @@ class PolicyPandaControlPair(ControlPair):
             self._last_joint_pos = current_joint_pos
 
         max_joint_vel = VELOCITY_LIMITS_MAX * max_vel_norm_factor
-        print("debug:last_joint",self._last_joint_pos)
-        print("debug:goal_joint",goal_joint_pos)
+        # print("debug:last_joint",self._last_joint_pos)
+        # print("debug:goal_joint",goal_joint_pos)
         waypoints, _ = self._generate_waypoints_within_limits(
             self._last_joint_pos, goal_joint_pos, self.control_hz, max_joint_vel
         )
-        print(
-            f"debug:Generated {len(waypoints)} waypoints with max joint velocity "
-            f"{max_joint_vel} rad/s"
-        )
+        # print(
+        #     f"debug:Generated {len(waypoints)} waypoints with max joint velocity "
+        #     f"{max_joint_vel} rad/s"
+        # )
         expanded_goal = goal_joint_pos.copy()
         #too jerky to actuate the entire waypoint sequence in one control step, so we send one waypoint at a time in each control step. The next waypoint will be generated in the next control step based on the latest joint position, which ensures smoother motion and better adherence to velocity limits.
         for i in range(min(20, len(waypoints))):
@@ -446,39 +503,7 @@ class PolicyPandaControlPair(ControlPair):
         # End_time = time.perf_counter()
         # print(f"command took {End_time - start_time:.3f} seconds")
 
-    def _log_action_debug(self, joint_pos: np.ndarray, gripper_cmd: float) -> None:
-        now = time.time()
-        if (now - self._last_action_log_ts) >= ACTION_LOG_INTERVAL_S:
-            pyzlc.info(
-                "Policy action: "
-                f"q=[{', '.join(f'{x:.3f}' for x in joint_pos)}], "
-                f"gripper={gripper_cmd:.3f}"
-            )
-            self._last_action_log_ts = now
-
-        gripper_binary = 1 if gripper_cmd >= 0.5 else 0
-        if self._last_gripper_binary is None:
-            self._last_gripper_binary = gripper_binary
-            self._gripper_toggle_window_start_ts = now
-            self._gripper_toggle_count = 0
-            return
-
-        if gripper_binary != self._last_gripper_binary:
-            self._gripper_toggle_count += 1
-            self._last_gripper_binary = gripper_binary
-
-        window_elapsed = now - self._gripper_toggle_window_start_ts
-        if window_elapsed >= GRIPPER_TOGGLE_WARN_WINDOW_S:
-            if self._gripper_toggle_count >= GRIPPER_TOGGLE_WARN_COUNT:
-                pyzlc.warn(
-                    "Gripper action toggling frequently: "
-                    f"{self._gripper_toggle_count} toggles in "
-                    f"{window_elapsed:.2f}s (threshold={GRIPPER_TOGGLE_WARN_COUNT}/"
-                    f"{GRIPPER_TOGGLE_WARN_WINDOW_S:.1f}s)."
-                )
-            self._gripper_toggle_window_start_ts = now
-            self._gripper_toggle_count = 0
-
+   
     def control_end(self) -> None:
         self._save_joint_comparison_plots()
         self.panda_arm.set_franka_arm_control_mode(ControlMode.IDLE)
